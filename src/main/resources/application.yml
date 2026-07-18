@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: ephemeral
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/ephemeral}
+    username: ${DB_USER:ephemeral}
+    password: ${DB_PASSWORD:ephemeral}
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 30MB
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: ${PORT:8080}
+  # tolerate large/stale browser cookies from other apps sharing localhost
+  max-http-request-header-size: 64KB
+
+ephemeral:
+  retention: ${RETENTION:7d}
+  cleanup-interval: ${CLEANUP_INTERVAL:15m}
+  jwt-secret: ${JWT_SECRET:dev-only-insecure-secret-change-me-please-0123456789}
+  jwt-ttl: 7d
+  storage-dir: ${STORAGE_DIR:./data/uploads}
+  livekit:
+    url: ${LIVEKIT_URL:ws://localhost:7880}
+    api-key: ${LIVEKIT_API_KEY:devkey}
+    api-secret: ${LIVEKIT_API_SECRET:livekit-dev-secret-please-change-me-0123456789}
+
+logging:
+  level:
+    com.ephemeral: DEBUG

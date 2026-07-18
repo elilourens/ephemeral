@@ -1,0 +1,55 @@
+# ephemeral — full self-hosted stack: app + postgres(+pgvector) + livekit.
+# Usage:  docker compose up --build   then open http://localhost:8080
+#
+# For access beyond localhost (LAN/internet), set LIVEKIT_URL to a host the
+# browser can reach (e.g. ws://192.168.1.10:7880) and flip use_external_ip: true
+# in livekit.yaml so WebRTC media can traverse NAT.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16      # plain postgres + the pgvector extension available
+    environment:
+      POSTGRES_DB: ephemeral
+      POSTGRES_USER: ephemeral
+      POSTGRES_PASSWORD: ephemeral
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ephemeral"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: ["--config", "/etc/livekit/livekit.yaml"]
+    volumes:
+      - ./livekit.yaml:/etc/livekit/livekit.yaml:ro
+    ports:
+      - "7880:7880"                    # signaling (WebSocket)
+      - "7881:7881"                    # TCP media fallback
+      - "50000-50100:50000-50100/udp"  # WebRTC media (audio/video/screenshare)
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/ephemeral
+      DB_USER: ephemeral
+      DB_PASSWORD: ephemeral
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod-please-a-long-random-32B+-secret}
+      RETENTION: ${RETENTION:-7d}
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://localhost:7880}
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: livekit-dev-secret-please-change-me-0123456789
+      STORAGE_DIR: /data/uploads
+    ports:
+      - "8080:8080"
+    volumes:
+      - uploads:/data/uploads
+
+volumes:
+  pgdata:
+  uploads:

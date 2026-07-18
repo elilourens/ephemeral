@@ -1,0 +1,17 @@
+target/
+data/
+uploads/
+*.log
+.toolchain/
+
+# IDE / editor
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+
+# env
+.env
+.env.local
+node_modules/

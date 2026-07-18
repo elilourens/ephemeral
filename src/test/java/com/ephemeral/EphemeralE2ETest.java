@@ -1,0 +1,820 @@
+package com.ephemeral;
+
+import com.ephemeral.file.StorageService;
+import com.ephemeral.message.RetentionService;
+import com.ephemeral.util.Ids;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
+import java.io.ByteArrayOutputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.WebSocket;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Base64;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * End-to-end tests: real HTTP against the running app, backed by a real (embedded)
+ * Postgres. Covers auth, guilds/roles, messaging, save, files, the retention purge,
+ * live WebSocket delivery, and LiveKit token issuance. Uses the JDK HttpClient so
+ * error statuses (401/403/404/409) are observed cleanly.
+ */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+class EphemeralE2ETest {
+
+    static EmbeddedPostgres PG;
+
+    @DynamicPropertySource
+    static void datasource(DynamicPropertyRegistry registry) throws Exception {
+        if (PG == null) {
+            PG = EmbeddedPostgres.builder().start();
+        }
+        registry.add("spring.datasource.url", () -> PG.getJdbcUrl("postgres", "postgres"));
+        registry.add("spring.datasource.username", () -> "postgres");
+        registry.add("spring.datasource.password", () -> "postgres");
+    }
+
+    @LocalServerPort
+    int port;
+    @Autowired
+    ObjectMapper mapper;
+    @Autowired
+    RetentionService retention;
+    @Autowired
+    NamedParameterJdbcTemplate jdbc;
+    @Autowired
+    StorageService storage;
+
+    final HttpClient http = HttpClient.newHttpClient();
+
+    // ---- helpers ----------------------------------------------------------
+
+    private String url(String path) {
+        return "http://localhost:" + port + path;
+    }
+
+    private String uniqueName() {
+        return "u" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+    }
+
+    private HttpResponse<String> raw(String method, String path, String token, Object body) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url(path)));
+        if (body != null) {
+            b.header("Content-Type", "application/json");
+            b.method(method, HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)));
+        } else {
+            b.method(method, HttpRequest.BodyPublishers.noBody());
+        }
+        if (token != null) {
+            b.header("Authorization", "Bearer " + token);
+        }
+        return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private JsonNode call(String method, String path, String token, Object body, int expectStatus) throws Exception {
+        HttpResponse<String> r = raw(method, path, token, body);
+        assertThat(r.statusCode()).as("%s %s -> %s", method, path, r.body()).isEqualTo(expectStatus);
+        String bod = r.body();
+        return (bod == null || bod.isEmpty()) ? null : mapper.readTree(bod);
+    }
+
+    private record Session(String token, UUID userId) {
+    }
+
+    private Session register(String username) throws Exception {
+        JsonNode n = call("POST", "/api/auth/register", null,
+                Map.of("username", username, "password", "hunter2pw", "displayName", username), 200);
+        return new Session(n.get("token").asText(), UUID.fromString(n.get("user").get("id").asText()));
+    }
+
+    private UUID channelOfType(JsonNode guild, String type) {
+        for (JsonNode c : guild.get("channels")) {
+            if (c.get("type").asText().equals(type)) {
+                return UUID.fromString(c.get("id").asText());
+            }
+        }
+        throw new AssertionError("no " + type + " channel");
+    }
+
+    private JsonNode jwtPayload(String jwt) throws Exception {
+        String p = jwt.split("\\.")[1];
+        return mapper.readTree(Base64.getUrlDecoder().decode(p));
+    }
+
+    // ---- tests ------------------------------------------------------------
+
+    @Test
+    void authFlow() throws Exception {
+        String name = uniqueName();
+        Session s = register(name);
+        assertThat(s.token()).isNotBlank();
+
+        call("GET", "/api/guilds", null, null, 401);            // unauth
+        call("POST", "/api/auth/register", null,
+                Map.of("username", name, "password", "hunter2pw"), 409); // duplicate
+
+        JsonNode me = call("GET", "/api/auth/me", s.token(), null, 200);
+        assertThat(me.get("username").asText()).isEqualTo(name.toLowerCase());
+
+        JsonNode login = call("POST", "/api/auth/login", null,
+                Map.of("username", name, "password", "hunter2pw"), 200);
+        assertThat(login.get("token").asText()).isNotBlank();
+        call("POST", "/api/auth/login", null,
+                Map.of("username", name, "password", "wrongpass"), 401);
+    }
+
+    @Test
+    void guildRolesAndChannels() throws Exception {
+        Session admin = register(uniqueName());
+        Session member = register(uniqueName());
+
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "My Server"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        assertThat(guild.get("channels")).hasSize(2);
+
+        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+        JsonNode members = call("GET", "/api/guilds/" + gid + "/members", admin.token(), null, 200);
+        assertThat(members).hasSize(2);
+
+        // member cannot create a channel; admin can
+        call("POST", "/api/guilds/" + gid + "/channels", member.token(),
+                Map.of("name", "nope", "type", "text"), 403);
+        JsonNode chan = call("POST", "/api/guilds/" + gid + "/channels", admin.token(),
+                Map.of("name", "random", "type", "text"), 200);
+        assertThat(chan.get("name").asText()).isEqualTo("random");
+
+        // promote member to admin, then they can create
+        call("PUT", "/api/guilds/" + gid + "/members/" + member.userId() + "/role",
+                admin.token(), Map.of("role", "admin"), 204);
+        call("POST", "/api/guilds/" + gid + "/channels", member.token(),
+                Map.of("name", "now-i-can", "type", "text"), 200);
+
+        // non-member cannot read the guild
+        Session outsider = register(uniqueName());
+        call("GET", "/api/guilds/" + gid, outsider.token(), null, 403);
+    }
+
+    @Test
+    void messagingSaveAndPagination() throws Exception {
+        Session s = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", s.token(), Map.of("name", "Chat"), 200);
+        UUID chan = channelOfType(guild, "text");
+
+        UUID[] ids = new UUID[3];
+        for (int i = 0; i < 3; i++) {
+            JsonNode m = call("POST", "/api/channels/" + chan + "/messages", s.token(),
+                    Map.of("content", "msg " + i), 200);
+            ids[i] = UUID.fromString(m.get("id").asText());
+            assertThat(m.get("createdAt").asText()).isNotBlank(); // derived from UUIDv7
+            Thread.sleep(3);
+        }
+
+        // newest-first
+        JsonNode page1 = call("GET", "/api/channels/" + chan + "/messages?limit=2", s.token(), null, 200);
+        assertThat(page1).hasSize(2);
+        assertThat(UUID.fromString(page1.get(0).get("id").asText())).isEqualTo(ids[2]);
+        assertThat(UUID.fromString(page1.get(1).get("id").asText())).isEqualTo(ids[1]);
+
+        // keyset: before the oldest we have
+        JsonNode page2 = call("GET",
+                "/api/channels/" + chan + "/messages?limit=2&before=" + ids[1], s.token(), null, 200);
+        assertThat(page2).hasSize(1);
+        assertThat(UUID.fromString(page2.get(0).get("id").asText())).isEqualTo(ids[0]);
+
+        // save / unsave
+        JsonNode saved = call("POST", "/api/messages/" + ids[0] + "/save", s.token(), null, 200);
+        assertThat(saved.get("saved").asBoolean()).isTrue();
+        JsonNode unsaved = call("DELETE", "/api/messages/" + ids[0] + "/save", s.token(), null, 200);
+        assertThat(unsaved.get("saved").asBoolean()).isFalse();
+
+        // delete
+        call("DELETE", "/api/messages/" + ids[2], s.token(), null, 204);
+        JsonNode after = call("GET", "/api/channels/" + chan + "/messages", s.token(), null, 200);
+        assertThat(after).hasSize(2);
+    }
+
+    @Test
+    void fileUploadAndSend() throws Exception {
+        Session s = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", s.token(), Map.of("name", "Files"), 200);
+        UUID chan = channelOfType(guild, "text");
+
+        // multipart upload
+        String boundary = "----ephemeralTestBoundary";
+        String crlf = "\r\n";
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.writeBytes(("--" + boundary + crlf).getBytes(StandardCharsets.UTF_8));
+        body.writeBytes(("Content-Disposition: form-data; name=\"file\"; filename=\"note.txt\"" + crlf)
+                .getBytes(StandardCharsets.UTF_8));
+        body.writeBytes(("Content-Type: text/plain" + crlf + crlf).getBytes(StandardCharsets.UTF_8));
+        body.writeBytes("hello attachment".getBytes(StandardCharsets.UTF_8));
+        body.writeBytes((crlf + "--" + boundary + "--" + crlf).getBytes(StandardCharsets.UTF_8));
+
+        HttpResponse<String> up = http.send(HttpRequest.newBuilder(URI.create(url("/api/uploads")))
+                .header("Authorization", "Bearer " + s.token())
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray())).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(up.statusCode()).isEqualTo(200);
+        JsonNode att = mapper.readTree(up.body());
+        UUID attId = UUID.fromString(att.get("id").asText());
+
+        // send message referencing the upload
+        JsonNode msg = call("POST", "/api/channels/" + chan + "/messages", s.token(),
+                Map.of("content", "see attached", "attachmentIds", List.of(attId.toString())), 200);
+        assertThat(msg.get("attachments")).hasSize(1);
+        assertThat(msg.get("attachments").get(0).get("filename").asText()).isEqualTo("note.txt");
+
+        // download is public and returns the bytes
+        HttpResponse<String> dl = http.send(HttpRequest.newBuilder(URI.create(url("/api/files/" + attId))).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(dl.statusCode()).isEqualTo(200);
+        assertThat(dl.body()).isEqualTo("hello attachment");
+    }
+
+    @Test
+    void retentionPurgesOldUnsavedMessagesAndTheirFiles() throws Exception {
+        Session s = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", s.token(), Map.of("name", "Ephemeral"), 200);
+        UUID chan = channelOfType(guild, "text");
+
+        Instant eightDaysAgo = Instant.now().minus(8, ChronoUnit.DAYS);
+        UUID oldUnsaved = Ids.boundary(eightDaysAgo);
+        UUID oldSaved = Ids.boundary(eightDaysAgo.plusMillis(1));
+        insertMessage(oldUnsaved, chan, s.userId(), "ancient, will vanish", false);
+        insertMessage(oldSaved, chan, s.userId(), "ancient, but SAVED", true);
+
+        // an attachment bound to the doomed message
+        UUID attId = Ids.newId();
+        insertAttachment(attId, oldUnsaved, s.userId());
+
+        // a fresh message that must survive
+        JsonNode fresh = call("POST", "/api/channels/" + chan + "/messages", s.token(),
+                Map.of("content", "fresh"), 200);
+        UUID freshId = UUID.fromString(fresh.get("id").asText());
+
+        int deleted = retention.purgeExpired();
+        assertThat(deleted).isGreaterThanOrEqualTo(1);
+
+        JsonNode remaining = call("GET", "/api/channels/" + chan + "/messages", s.token(), null, 200);
+        List<String> ids = remaining.findValuesAsText("id");
+        assertThat(ids).contains(oldSaved.toString(), freshId.toString());
+        assertThat(ids).doesNotContain(oldUnsaved.toString());
+
+        // the purged message's attachment row is gone (cascade) -> 404
+        HttpResponse<String> dl = http.send(HttpRequest.newBuilder(URI.create(url("/api/files/" + attId))).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(dl.statusCode()).isEqualTo(404);
+    }
+
+    @Test
+    void websocketDeliversLiveMessages() throws Exception {
+        Session s = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", s.token(), Map.of("name", "Live"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+
+        BlockingQueue<String> received = new LinkedBlockingQueue<>();
+        WebSocket ws = http.newWebSocketBuilder()
+                .buildAsync(URI.create("ws://localhost:" + port + "/ws?token=" + s.token()),
+                        new WebSocket.Listener() {
+                            @Override
+                            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                                received.add(data.toString());
+                                webSocket.request(1);
+                                return null;
+                            }
+                        })
+                .get(5, TimeUnit.SECONDS);
+
+        // wait for "ready", then subscribe. Message events fan out guild-wide (so
+        // unread/mentions work for channels you aren't viewing); the channel sub is
+        // only for typing. Mirror the real client: subscribe to both.
+        String ready = received.poll(5, TimeUnit.SECONDS);
+        assertThat(ready).contains("ready");
+        ws.sendText("{\"type\":\"subscribe_guild\",\"guildId\":\"" + gid + "\"}", true).get(2, TimeUnit.SECONDS);
+        ws.sendText("{\"type\":\"subscribe\",\"channelId\":\"" + chan + "\"}", true).get(2, TimeUnit.SECONDS);
+        Thread.sleep(300); // let the subscription register
+
+        call("POST", "/api/channels/" + chan + "/messages", s.token(),
+                Map.of("content", "hello over the wire"), 200);
+
+        String event = null;
+        long deadline = System.currentTimeMillis() + 5000;
+        while (System.currentTimeMillis() < deadline) {
+            String frame = received.poll(5, TimeUnit.SECONDS);
+            if (frame != null && frame.contains("\"type\":\"message\"")) {
+                event = frame;
+                break;
+            }
+        }
+        assertThat(event).as("expected a live message frame").isNotNull();
+        assertThat(event).contains("hello over the wire");
+        ws.abort();
+    }
+
+    @Test
+    void readStateReactionsAndPins() throws Exception {
+        Session admin = register(uniqueName());
+        Session member = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Feat"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+
+        // read-state must not 500 (regression: Postgres has no max(uuid) aggregate)
+        JsonNode empty = call("GET", "/api/guilds/" + gid + "/read-state", member.token(), null, 200);
+        assertThat(empty.isArray()).isTrue();
+
+        // admin @mentions the member -> member's mention_count for the channel is 1
+        call("POST", "/api/channels/" + chan + "/messages", admin.token(),
+                Map.of("content", "hey <@" + member.userId() + "> look here"), 200);
+        JsonNode rs = call("GET", "/api/guilds/" + gid + "/read-state", member.token(), null, 200);
+        JsonNode chanState = null;
+        for (JsonNode n : rs) {
+            if (n.get("channelId").asText().equals(chan.toString())) chanState = n;
+        }
+        assertThat(chanState).isNotNull();
+        assertThat(chanState.get("mentionCount").asInt()).isEqualTo(1);
+        assertThat(chanState.get("latestId").isNull()).isFalse();
+
+        // member acks -> mention_count resets to 0
+        call("POST", "/api/channels/" + chan + "/ack", member.token(),
+                Map.of("lastReadId", chanState.get("latestId").asText()), 204);
+        JsonNode rs2 = call("GET", "/api/guilds/" + gid + "/read-state", member.token(), null, 200);
+        for (JsonNode n : rs2) {
+            if (n.get("channelId").asText().equals(chan.toString())) {
+                assertThat(n.get("mentionCount").asInt()).isEqualTo(0);
+            }
+        }
+
+        // reactions toggle on/off
+        JsonNode msg = call("POST", "/api/channels/" + chan + "/messages", admin.token(),
+                Map.of("content", "react to me"), 200);
+        UUID mid = UUID.fromString(msg.get("id").asText());
+        String fire = "🔥"; // exercises UTF-8 round-trip through JSON + Postgres text
+        JsonNode reacted = call("POST", "/api/messages/" + mid + "/react", member.token(),
+                Map.of("emoji", fire), 200);
+        assertThat(reacted.get("reactions")).hasSize(1);
+        assertThat(reacted.get("reactions").get(0).get("emoji").asText()).isEqualTo(fire);
+        assertThat(reacted.get("reactions").get(0).get("count").asInt()).isEqualTo(1);
+        assertThat(reacted.get("reactions").get(0).get("mine").asBoolean()).isTrue();
+        JsonNode unreacted = call("POST", "/api/messages/" + mid + "/react", member.token(),
+                Map.of("emoji", fire), 200);
+        assertThat(unreacted.get("reactions")).isEmpty();
+
+        // pin / list pins / unpin
+        JsonNode pinned = call("POST", "/api/messages/" + mid + "/pin", admin.token(), null, 200);
+        assertThat(pinned.get("pinned").asBoolean()).isTrue();
+        JsonNode pins = call("GET", "/api/channels/" + chan + "/pins", member.token(), null, 200);
+        assertThat(pins.findValuesAsText("id")).contains(mid.toString());
+        JsonNode unpinned = call("DELETE", "/api/messages/" + mid + "/pin", admin.token(), null, 200);
+        assertThat(unpinned.get("pinned").asBoolean()).isFalse();
+
+        // a member cannot pin someone else's message
+        call("POST", "/api/messages/" + mid + "/pin", member.token(), null, 403);
+    }
+
+    @Test
+    void renameLeaveAndDeleteServer() throws Exception {
+        Session owner = register(uniqueName());
+        Session member = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", owner.token(), Map.of("name", "Original"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+
+        // rename server (admin/owner only)
+        JsonNode renamed = call("PATCH", "/api/guilds/" + gid, owner.token(), Map.of("name", "Renamed HQ"), 200);
+        assertThat(renamed.get("name").asText()).isEqualTo("Renamed HQ");
+        call("PATCH", "/api/guilds/" + gid, member.token(), Map.of("name", "Nope"), 403);
+
+        // rename channel (admin only)
+        JsonNode rc = call("PATCH", "/api/channels/" + chan, owner.token(), Map.of("name", "renamed-chan"), 200);
+        assertThat(rc.get("name").asText()).isEqualTo("renamed-chan");
+        call("PATCH", "/api/channels/" + chan, member.token(), Map.of("name", "nope"), 403);
+
+        // owner cannot leave; member can
+        call("POST", "/api/guilds/" + gid + "/leave", owner.token(), null, 400);
+        call("POST", "/api/guilds/" + gid + "/leave", member.token(), null, 204);
+        call("GET", "/api/guilds/" + gid, member.token(), null, 403); // no longer a member
+
+        // a non-owner cannot delete; owner can (cascades channels + messages)
+        Session other = register(uniqueName());
+        call("POST", "/api/guilds/" + gid + "/join", other.token(), null, 200);
+        call("DELETE", "/api/guilds/" + gid, other.token(), null, 403);
+        call("DELETE", "/api/guilds/" + gid, owner.token(), null, 204);
+        call("GET", "/api/guilds/" + gid, owner.token(), null, 403); // gone
+    }
+
+    @Test
+    void adminOnlyChannelsHiddenAndEnforced() throws Exception {
+        Session admin = register(uniqueName());
+        Session member = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Locked"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+
+        JsonNode secret = call("POST", "/api/guilds/" + gid + "/channels", admin.token(),
+                Map.of("name", "staff", "type", "text", "adminOnly", true), 200);
+        UUID secretId = UUID.fromString(secret.get("id").asText());
+        assertThat(secret.get("adminOnly").asBoolean()).isTrue();
+
+        // admin sees it in the guild; member does NOT
+        JsonNode asAdmin = call("GET", "/api/guilds/" + gid, admin.token(), null, 200);
+        assertThat(asAdmin.get("channels").findValuesAsText("id")).contains(secretId.toString());
+        JsonNode asMember = call("GET", "/api/guilds/" + gid, member.token(), null, 200);
+        assertThat(asMember.get("channels").findValuesAsText("id")).doesNotContain(secretId.toString());
+
+        // member cannot read or post; admin can
+        call("GET", "/api/channels/" + secretId + "/messages", member.token(), null, 403);
+        call("POST", "/api/channels/" + secretId + "/messages", member.token(), Map.of("content", "hi"), 403);
+        call("POST", "/api/channels/" + secretId + "/messages", admin.token(), Map.of("content", "staff only"), 200);
+
+        // toggling it public makes it visible + usable to the member
+        call("PUT", "/api/channels/" + secretId + "/admin-only", admin.token(), Map.of("adminOnly", false), 200);
+        JsonNode nowMember = call("GET", "/api/guilds/" + gid, member.token(), null, 200);
+        assertThat(nowMember.get("channels").findValuesAsText("id")).contains(secretId.toString());
+        call("POST", "/api/channels/" + secretId + "/messages", member.token(), Map.of("content", "hello now"), 200);
+        // a member can't flip the flag
+        call("PUT", "/api/channels/" + secretId + "/admin-only", member.token(), Map.of("adminOnly", true), 403);
+    }
+
+    @Test
+    void messageSearch() throws Exception {
+        Session admin = register(uniqueName());
+        Session member = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Searchable"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+
+        call("POST", "/api/channels/" + chan + "/messages", admin.token(),
+                Map.of("content", "the quick brown fox jumps"), 200);
+        JsonNode m2 = call("POST", "/api/channels/" + chan + "/messages", member.token(),
+                Map.of("content", "lazy dogs sleep all afternoon"), 200);
+        call("POST", "/api/channels/" + chan + "/messages", admin.token(),
+                Map.of("content", "check https://example.com out"), 200);
+
+        // free-text (websearch_to_tsquery + stemming: "jumps" matches "jumping" etc.)
+        JsonNode r1 = call("GET", "/api/search?q=fox&guildId=" + gid, admin.token(), null, 200);
+        assertThat(r1).hasSize(1);
+        assertThat(r1.get(0).get("content").asText()).contains("brown fox");
+        assertThat(r1.get(0).get("channelName").asText()).isEqualTo("general");
+
+        // from: filter
+        JsonNode r2 = call("GET", "/api/search?q=sleep&guildId=" + gid + "&authorId=" + member.userId(),
+                admin.token(), null, 200);
+        assertThat(r2).hasSize(1);
+        assertThat(r2.get(0).get("id").asText()).isEqualTo(m2.get("id").asText());
+
+        // has:link filter (no query text)
+        JsonNode r3 = call("GET", "/api/search?guildId=" + gid + "&has=link", admin.token(), null, 200);
+        assertThat(r3).hasSize(1);
+        assertThat(r3.get(0).get("content").asText()).contains("example.com");
+
+        // a non-member of the guild sees nothing
+        Session outsider = register(uniqueName());
+        JsonNode r4 = call("GET", "/api/search?q=fox&guildId=" + gid, outsider.token(), null, 200);
+        assertThat(r4).isEmpty();
+
+        // admin-only channels don't leak into a member's search
+        JsonNode secret = call("POST", "/api/guilds/" + gid + "/channels", admin.token(),
+                Map.of("name", "vault", "type", "text", "adminOnly", true), 200);
+        UUID secretId = UUID.fromString(secret.get("id").asText());
+        call("POST", "/api/channels/" + secretId + "/messages", admin.token(),
+                Map.of("content", "topsecret password fox"), 200);
+        JsonNode adminHits = call("GET", "/api/search?q=topsecret&guildId=" + gid, admin.token(), null, 200);
+        assertThat(adminHits).hasSize(1);
+        JsonNode memberHits = call("GET", "/api/search?q=topsecret&guildId=" + gid, member.token(), null, 200);
+        assertThat(memberHits).isEmpty();
+    }
+
+    @Test
+    void settingsPersistAndAccountDeletionRemovesEverything() throws Exception {
+        Session user = register(uniqueName());
+        Session friend = register(uniqueName());
+
+        // settings roundtrip
+        call("GET", "/api/users/me/settings", user.token(), null, 200); // defaults to {}
+        call("PUT", "/api/users/me/settings", user.token(),
+                Map.of("media", Map.of("hqAudio", true), "muted", Map.of()), 204);
+        JsonNode s = call("GET", "/api/users/me/settings", user.token(), null, 200);
+        assertThat(s.get("media").get("hqAudio").asBoolean()).isTrue();
+
+        // user owns a guild with a message from a friend, and posts in the friend's guild
+        JsonNode myGuild = call("POST", "/api/guilds", user.token(), Map.of("name", "Mine"), 200);
+        UUID myGid = UUID.fromString(myGuild.get("id").asText());
+        UUID myChan = channelOfType(myGuild, "text");
+        call("POST", "/api/guilds/" + myGid + "/join", friend.token(), null, 200);
+        call("POST", "/api/channels/" + myChan + "/messages", friend.token(), Map.of("content", "hi in your server"), 200);
+
+        JsonNode friendGuild = call("POST", "/api/guilds", friend.token(), Map.of("name", "Theirs"), 200);
+        UUID friendGid = UUID.fromString(friendGuild.get("id").asText());
+        UUID friendChan = channelOfType(friendGuild, "text");
+        call("POST", "/api/guilds/" + friendGid + "/join", user.token(), null, 200);
+        JsonNode postedElsewhere = call("POST", "/api/channels/" + friendChan + "/messages", user.token(),
+                Map.of("content", "my message in their server"), 200);
+        UUID postedId = UUID.fromString(postedElsewhere.get("id").asText());
+
+        // delete the account
+        call("DELETE", "/api/users/me", user.token(), null, 204);
+
+        // the owned guild is gone (friend can't fetch it); the user's message in the
+        // friend's server is gone too; the friend's own message survived (their guild).
+        call("GET", "/api/guilds/" + myGid, friend.token(), null, 403);
+        JsonNode friendMsgs = call("GET", "/api/channels/" + friendChan + "/messages", friend.token(), null, 200);
+        assertThat(friendMsgs.findValuesAsText("id")).doesNotContain(postedId.toString());
+        // and the profile no longer exists
+        call("GET", "/api/users/" + user.userId(), friend.token(), null, 404);
+    }
+
+    @Test
+    void channelFeaturesTopicSlowModeAndTextInVoice() throws Exception {
+        Session admin = register(uniqueName());
+        Session member = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Feat5"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+        UUID voice = channelOfType(guild, "voice");
+        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+
+        // update topic + slow mode + (voice) user limit — admin only
+        JsonNode upd = call("PATCH", "/api/channels/" + chan, admin.token(),
+                Map.of("topic", "welcome & rules", "slowModeSeconds", 5), 200);
+        assertThat(upd.get("topic").asText()).isEqualTo("welcome & rules");
+        assertThat(upd.get("slowModeSeconds").asInt()).isEqualTo(5);
+        call("PATCH", "/api/channels/" + chan, member.token(), Map.of("topic", "nope"), 403);
+        JsonNode vupd = call("PATCH", "/api/channels/" + voice, admin.token(), Map.of("userLimit", 3), 200);
+        assertThat(vupd.get("userLimit").asInt()).isEqualTo(3);
+
+        // slow mode: a member's 2nd quick post is rejected (429); admins are exempt
+        call("POST", "/api/channels/" + chan + "/messages", member.token(), Map.of("content", "first"), 200);
+        HttpResponse<String> tooFast = raw("POST", "/api/channels/" + chan + "/messages", member.token(),
+                Map.of("content", "second too fast"));
+        assertThat(tooFast.statusCode()).isEqualTo(429);
+        call("POST", "/api/channels/" + chan + "/messages", admin.token(), Map.of("content", "a1"), 200);
+        call("POST", "/api/channels/" + chan + "/messages", admin.token(), Map.of("content", "a2 (exempt)"), 200);
+
+        // text-in-voice: messages can be posted to and listed from a voice channel
+        JsonNode vm = call("POST", "/api/channels/" + voice + "/messages", member.token(),
+                Map.of("content", "hello from the voice chat"), 200);
+        JsonNode vlist = call("GET", "/api/channels/" + voice + "/messages", member.token(), null, 200);
+        assertThat(vlist.findValuesAsText("id")).contains(vm.get("id").asText());
+
+        // slow-mode cap: values are clamped to 0–21600
+        JsonNode capped = call("PATCH", "/api/channels/" + chan, admin.token(),
+                Map.of("slowModeSeconds", 999999), 200);
+        assertThat(capped.get("slowModeSeconds").asInt()).isEqualTo(21600);
+    }
+
+    @Test
+    void liveKitTokenGrantsMatchRole() throws Exception {
+        Session admin = register(uniqueName());
+        Session member = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Voice"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID voice = channelOfType(guild, "voice");
+        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+
+        JsonNode adminTok = call("POST", "/api/channels/" + voice + "/voice-token", admin.token(), null, 200);
+        JsonNode ap = jwtPayload(adminTok.get("token").asText());
+        assertThat(ap.get("iss").asText()).isEqualTo("devkey");
+        assertThat(ap.get("video").get("roomJoin").asBoolean()).isTrue();
+        assertThat(ap.get("video").get("roomAdmin").asBoolean()).isTrue();
+
+        JsonNode memberTok = call("POST", "/api/channels/" + voice + "/voice-token", member.token(), null, 200);
+        JsonNode mp = jwtPayload(memberTok.get("token").asText());
+        assertThat(mp.get("video").get("roomJoin").asBoolean()).isTrue();
+        assertThat(mp.get("video").has("roomAdmin")).isFalse();
+    }
+
+    @Test
+    void adminCanDeleteAnyMessageButMemberCannot() throws Exception {
+        Session admin = register(uniqueName());
+        Session bob = register(uniqueName());
+        Session carol = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Mod"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        call("POST", "/api/guilds/" + gid + "/join", carol.token(), null, 200);
+
+        UUID bobMsg = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
+                bob.token(), Map.of("content", "bob speaks"), 200).get("id").asText());
+
+        call("DELETE", "/api/messages/" + bobMsg, carol.token(), null, 403);   // peer member: no
+        UUID bobMsg2 = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
+                bob.token(), Map.of("content", "again"), 200).get("id").asText());
+        call("DELETE", "/api/messages/" + bobMsg2, bob.token(), null, 204);     // own: yes
+        call("DELETE", "/api/messages/" + bobMsg, admin.token(), null, 204);    // admin: yes
+    }
+
+    @Test
+    void nonMemberIsBlockedFromChannel() throws Exception {
+        Session admin = register(uniqueName());
+        Session outsider = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Private"), 200);
+        UUID text = channelOfType(guild, "text");
+        UUID voice = channelOfType(guild, "voice");
+
+        call("GET", "/api/channels/" + text + "/messages", outsider.token(), null, 403);
+        call("POST", "/api/channels/" + text + "/messages", outsider.token(), Map.of("content", "sneak"), 403);
+        call("POST", "/api/channels/" + voice + "/voice-token", outsider.token(), null, 403);
+    }
+
+    @Test
+    void invalidTokenIsRejected() throws Exception {
+        HttpResponse<String> r = raw("GET", "/api/auth/me", "garbage.token.value", null);
+        assertThat(r.statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void websocketRejectsInvalidToken() throws Exception {
+        WsConn c = openWs("not-a-real-token");
+        // handshake completes, then the server closes without ever sending "ready"
+        assertThat(c.frames().poll(3, TimeUnit.SECONDS)).isNull();
+        c.ws().abort();
+    }
+
+    @Test
+    void websocketDoesNotLeakForeignChannelMessages() throws Exception {
+        Session admin = register(uniqueName());
+        Session outsider = register(uniqueName());   // never joins the guild
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Secret"), 200);
+        UUID chan = channelOfType(guild, "text");
+
+        WsConn c = openWs(outsider.token());
+        assertThat(c.frames().poll(5, TimeUnit.SECONDS)).contains("ready");
+        // try to subscribe to a channel we're not a member of -> server ignores it
+        c.ws().sendText("{\"type\":\"subscribe\",\"channelId\":\"" + chan + "\"}", true).get(2, TimeUnit.SECONDS);
+        Thread.sleep(300);
+        call("POST", "/api/channels/" + chan + "/messages", admin.token(), Map.of("content", "top secret"), 200);
+
+        // outsider must NOT receive the message
+        long deadline = System.currentTimeMillis() + 3000;
+        while (System.currentTimeMillis() < deadline) {
+            String frame = c.frames().poll(1, TimeUnit.SECONDS);
+            assertThat(frame == null || !frame.contains("\"type\":\"message\"")).isTrue();
+        }
+        c.ws().abort();
+    }
+
+    @Test
+    void perUserSaveExemptsWhileAnyoneStillSaved() throws Exception {
+        Session admin = register(uniqueName());
+        Session bob = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Saves"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+
+        UUID msg = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
+                admin.token(), Map.of("content", "keep me"), 200).get("id").asText());
+
+        assertThat(call("POST", "/api/messages/" + msg + "/save", admin.token(), null, 200)
+                .get("saved").asBoolean()).isTrue();
+        assertThat(call("POST", "/api/messages/" + msg + "/save", bob.token(), null, 200)
+                .get("saved").asBoolean()).isTrue();
+        // admin unsaves -> still saved because bob still has it saved
+        assertThat(call("DELETE", "/api/messages/" + msg + "/save", admin.token(), null, 200)
+                .get("saved").asBoolean()).isTrue();
+        // bob unsaves -> now nobody saved it -> exemption lifts
+        assertThat(call("DELETE", "/api/messages/" + msg + "/save", bob.token(), null, 200)
+                .get("saved").asBoolean()).isFalse();
+    }
+
+    @Test
+    void cannotBindAnotherUsersUpload() throws Exception {
+        Session alice = register(uniqueName());
+        Session bob = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", alice.token(), Map.of("name", "Uploads"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+
+        UUID aliceUpload = uploadFile(alice.token(), "alice.txt", "alice's file");
+        // bob tries to attach alice's upload -> silently not bound (owner mismatch)
+        JsonNode msg = call("POST", "/api/channels/" + chan + "/messages", bob.token(),
+                Map.of("content", "not mine", "attachmentIds", List.of(aliceUpload.toString())), 200);
+        assertThat(msg.get("attachments")).isEmpty();
+    }
+
+    @Test
+    void kickRevokesAccess() throws Exception {
+        Session admin = register(uniqueName());
+        Session bob = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "KickTest"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+
+        call("GET", "/api/guilds/" + gid, bob.token(), null, 200);                 // in
+        call("POST", "/api/channels/" + chan + "/messages", bob.token(), Map.of("content", "hi"), 200);
+        call("DELETE", "/api/guilds/" + gid + "/members/" + bob.userId(), admin.token(), null, 204);
+        call("GET", "/api/guilds/" + gid, bob.token(), null, 403);                 // out
+        call("POST", "/api/channels/" + chan + "/messages", bob.token(), Map.of("content", "back?"), 403);
+    }
+
+    @Test
+    void orphanBlobsAreReconciled() throws Exception {
+        Session s = register(uniqueName());
+        UUID att = uploadFile(s.token(), "kept.txt", "keep me");
+        java.nio.file.Path root = storage.root();
+        java.nio.file.Path referenced = root.resolve(att.toString());
+        assertThat(java.nio.file.Files.exists(referenced)).isTrue();
+
+        // a rogue blob on disk with no attachment row, backdated past the grace window
+        java.nio.file.Path orphan = root.resolve("orphan-" + UUID.randomUUID());
+        java.nio.file.Files.write(orphan, "orphan".getBytes());
+        java.nio.file.Files.setLastModifiedTime(orphan,
+                java.nio.file.attribute.FileTime.from(Instant.now().minusSeconds(7200)));
+
+        int removed = retention.reconcileOrphanBlobs(java.time.Duration.ofHours(1));
+        assertThat(removed).isGreaterThanOrEqualTo(1);
+        assertThat(java.nio.file.Files.exists(orphan)).isFalse();     // orphan reconciled away
+        assertThat(java.nio.file.Files.exists(referenced)).isTrue();  // referenced blob kept
+    }
+
+    // ---- websocket + upload helpers ---------------------------------------
+
+    private record WsConn(WebSocket ws, BlockingQueue<String> frames) {
+    }
+
+    private WsConn openWs(String token) throws Exception {
+        BlockingQueue<String> q = new LinkedBlockingQueue<>();
+        WebSocket ws = http.newWebSocketBuilder()
+                .buildAsync(URI.create("ws://localhost:" + port + "/ws" + (token == null ? "" : "?token=" + token)),
+                        new WebSocket.Listener() {
+                            @Override
+                            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                                q.add(data.toString());
+                                webSocket.request(1);
+                                return null;
+                            }
+                        })
+                .get(5, TimeUnit.SECONDS);
+        return new WsConn(ws, q);
+    }
+
+    private UUID uploadFile(String token, String filename, String content) throws Exception {
+        String boundary = "----b" + System.nanoTime();
+        String crlf = "\r\n";
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.writeBytes(("--" + boundary + crlf).getBytes(StandardCharsets.UTF_8));
+        body.writeBytes(("Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"" + crlf)
+                .getBytes(StandardCharsets.UTF_8));
+        body.writeBytes(("Content-Type: text/plain" + crlf + crlf).getBytes(StandardCharsets.UTF_8));
+        body.writeBytes(content.getBytes(StandardCharsets.UTF_8));
+        body.writeBytes((crlf + "--" + boundary + "--" + crlf).getBytes(StandardCharsets.UTF_8));
+        HttpResponse<String> up = http.send(HttpRequest.newBuilder(URI.create(url("/api/uploads")))
+                        .header("Authorization", "Bearer " + token)
+                        .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                        .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray())).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(up.statusCode()).isEqualTo(200);
+        return UUID.fromString(mapper.readTree(up.body()).get("id").asText());
+    }
+
+    // ---- direct-insert helpers for backdated rows -------------------------
+
+    private void insertMessage(UUID id, UUID channelId, UUID authorId, String content, boolean saved) {
+        jdbc.update("""
+                insert into messages (id, channel_id, author_id, content, saved)
+                values (:id, :c, :a, :content, :saved)
+                """, new MapSqlParameterSource()
+                .addValue("id", id).addValue("c", channelId).addValue("a", authorId)
+                .addValue("content", content).addValue("saved", saved));
+    }
+
+    private void insertAttachment(UUID id, UUID messageId, UUID ownerId) {
+        jdbc.update("""
+                insert into attachments (id, message_id, owner_id, filename, content_type, size_bytes, storage_key)
+                values (:id, :m, :o, 'doomed.txt', 'text/plain', 3, :k)
+                """, new MapSqlParameterSource()
+                .addValue("id", id).addValue("m", messageId).addValue("o", ownerId)
+                .addValue("k", id.toString()));
+    }
+}

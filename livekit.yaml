@@ -1,0 +1,16 @@
+# LiveKit server config for the compose stack.
+# The api key/secret MUST match the app's LIVEKIT_API_KEY / LIVEKIT_API_SECRET.
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  # Set true when self-hosting on a box whose public IP differs from its local
+  # IP (most VPS / behind-NAT setups) so clients can reach the media ports.
+  use_external_ip: false
+keys:
+  devkey: livekit-dev-secret-please-change-me-0123456789
+webhook:
+  api_key: devkey
+  urls:
+    - http://app:8080/api/livekit/webhook

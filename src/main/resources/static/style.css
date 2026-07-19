@@ -1763,7 +1763,6 @@ button:active, .btn:active { transform: scale(.94); }
    (#2c3444) becomes their border, divider and text colour. The outer panes
    (rail/sidebar/members) stay dark with white text. Done by re-scoping the
    design tokens inside these containers. */
-#content, .content-header, .composer,
 .context-menu, .modal, .mention-pop, .profile-card, .emoji-pop,
 .msg-actions, .toast, .search-hit {
   --text: #2c3444;
@@ -1779,16 +1778,6 @@ button:active, .btn:active { transform: scale(.94); }
   color: var(--text);
 }
 
-#content {
-  background: rgba(255, 255, 255, .42);
-  border: 1px solid rgba(44, 52, 68, .38);
-  box-shadow: 0 18px 44px rgba(8, 14, 26, .25);
-}
-.content-header, .composer {
-  background: rgba(255, 255, 255, .5);
-  border: 1px solid rgba(44, 52, 68, .34);
-  box-shadow: 0 10px 26px rgba(8, 14, 26, .16);
-}
 .context-menu, .modal, .mention-pop, .profile-card, .emoji-pop {
   background: rgba(255, 255, 255, .58);
   -webkit-backdrop-filter: blur(30px) saturate(160%);
@@ -1800,12 +1789,11 @@ button:active, .btn:active { transform: scale(.94); }
 .toast { background: rgba(255, 255, 255, .8); color: #2c3444; border-color: rgba(44, 52, 68, .4); }
 
 /* inner elements retinted for the light surfaces */
-#content .text-input, .modal .text-input, .composer textarea { background: rgba(44, 52, 68, .07); color: var(--text); border-color: rgba(44, 52, 68, .3); }
-.composer textarea { background: transparent; border: none; }
-#content .md-code, #content .md-inline-code { background: rgba(44, 52, 68, .1); color: #222b3a; border-color: rgba(44, 52, 68, .22); }
-#content .spoiler { background: rgba(44, 52, 68, .8); }
-#content .spoiler.revealed { background: rgba(44, 52, 68, .1); }
-#content .attach-file, #content .unfurl, #content .embed-card, #content .yt-facade { background: rgba(255, 255, 255, .5); border-color: var(--border); }
-.message:hover { background: rgba(44, 52, 68, .06); }
-.reaction.add { background: rgba(44, 52, 68, .75); color: #f2f5f9; }
-.reaction.add:hover { background: var(--hover); color: var(--text-faint); }
+.modal .text-input { background: rgba(44, 52, 68, .07); color: var(--text); border-color: rgba(44, 52, 68, .3); }
+
+/* main chat/voice panel: same dark glass as the side panels (user request) */
+#content {
+  background: rgba(28, 35, 48, .48);
+  border: 1px solid rgba(255, 255, 255, .13);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .11), 0 18px 40px rgba(8, 14, 26, .32);
+}

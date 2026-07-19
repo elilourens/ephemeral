@@ -125,7 +125,7 @@
         // single-line ```code```
         const single = line.match(/^```(.+?)```\s*$/);
         if (single) {
-          pieces.push({ block: true, html: '<pre class="md-code"><code>' + single[1] + "</code></pre>" });
+          pieces.push({ block: true, html: '<pre class="md-code"><button class="code-copy" aria-label="Copy code">copy</button><code>' + single[1] + "</code></pre>" });
           i++; continue;
         }
         // multi-line fenced block (optional language tag on the opening fence)
@@ -133,7 +133,7 @@
         i++;
         while (i < lines.length && !/^```\s*$/.test(lines[i])) { code.push(lines[i]); i++; }
         if (i < lines.length) i++; // consume closing fence
-        pieces.push({ block: true, html: '<pre class="md-code"><code>' + code.join("\n") + "</code></pre>" });
+        pieces.push({ block: true, html: '<pre class="md-code"><button class="code-copy" aria-label="Copy code">copy</button><code>' + code.join("\n") + "</code></pre>" });
         continue;
       }
       if (/^&gt;\s?/.test(line)) {
@@ -750,6 +750,7 @@
     pttRelease: 200,           // ms release delay
     afkTimeoutMin: 15,         // auto-disconnect from voice after N idle minutes (0 = never)
     notifSound: true,
+    shareTyping: true,         // off = never broadcast "…is typing" (privacy)
   };
   let media = (() => {
     try { return { ...defaultMedia, ...(JSON.parse(localStorage.getItem(MEDIA_KEY)) || {}) }; }
@@ -997,6 +998,10 @@
         segRow("Frame Rate", "screenFps", [[15, "15 fps"], [30, "30 fps"], [60, "60 fps"]], reshareIfActive),
         segRow("Priority", "screenPriority", [["clarity", "Clarity"], ["balanced", "Balanced"], ["motion", "Motion"]], reshareIfActive),
         h("div", { class: "set-note", text: "Screen-share changes take effect the next time you start sharing." }),
+      ] },
+      { name: "Chat & Privacy", rows: [
+        toggleRow("Share Typing Indicator", "shareTyping", "Off = others never see \"…is typing\" from you.", null),
+        toggleRow("Notification Sound", "notifSound", "Play a ping when you're @mentioned.", null),
       ] },
     ];
     const tabbar = h("div", { class: "set-tabs" });
@@ -1738,6 +1743,11 @@
     let prev = null;
     let dividerDrawn = false;
     for (const m of state.messages) {
+      // day separator (Today / Yesterday / Jul 12) whenever the calendar day flips
+      if (!prev || new Date(prev.createdAt).toDateString() !== new Date(m.createdAt).toDateString()) {
+        list.appendChild(h("div", { class: "day-divider" }, h("span", { text: dayLabel(m.createdAt) })));
+        prev = null; // don't group across days
+      }
       // "New messages" divider before the first message newer than lastReadId
       if (!dividerDrawn && state.newDivider && m.id > state.newDivider) {
         list.appendChild(h("div", { class: "new-divider" }, h("span", { text: "New" })));
@@ -1755,6 +1765,61 @@
 
     if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
     updateJumpPresent();
+  }
+
+  // ---- quick switcher (Ctrl/Cmd+K): fuzzy-jump to any channel, DM or server ----
+  function openQuickSwitcher() {
+    const items = [];
+    for (const g of state.guilds || []) {
+      items.push({ label: g.name, kind: "server", glyph: "compass", go: () => selectGuild(g.id) });
+      for (const c of g.channels || []) {
+        items.push({ label: c.name, kind: g.name, glyph: c.type === "voice" ? "volume" : "hash",
+          go: async () => { if (!state.currentGuild || state.currentGuild.id !== g.id) await selectGuild(g.id); selectChannel(c.id); } });
+      }
+    }
+    for (const d of state.dms || []) {
+      items.push({ label: d.other.displayName || d.other.username, kind: "DM", glyph: "message-circle", go: () => selectDm(d) });
+    }
+    const input = h("input", { class: "text-input", placeholder: "Where to?" });
+    const list = h("div", { class: "qs-list" });
+    let filtered = items, active = 0;
+    const render = () => {
+      list.innerHTML = "";
+      filtered.slice(0, 12).forEach((it, i) => {
+        const row = h("div", { class: "qs-item" + (i === active ? " active" : ""),
+          onclick: () => { closeModal(); it.go(); } },
+          icon(it.glyph, 15), h("span", { class: "qs-name", text: it.label }),
+          h("span", { class: "qs-kind", text: it.kind }));
+        list.appendChild(row);
+      });
+      if (!filtered.length) list.appendChild(h("div", { class: "qs-empty", text: "No matches" }));
+    };
+    const fuzzy = (q, s) => { // subsequence match, case-insensitive
+      q = q.toLowerCase(); s = s.toLowerCase();
+      let i = 0; for (const ch of s) if (ch === q[i]) i++;
+      return i === q.length;
+    };
+    input.addEventListener("input", () => {
+      const q = input.value.trim();
+      filtered = q ? items.filter((it) => fuzzy(q, it.label)) : items;
+      active = 0; render();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(active + 1, Math.min(filtered.length, 12) - 1); render(); }
+      if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(active - 1, 0); render(); }
+      if (e.key === "Enter" && filtered[active]) { e.preventDefault(); closeModal(); filtered[active].go(); }
+    });
+    render();
+    modal({ title: "Quick Switcher", body: [input, list], footer: [] });
+  }
+
+  function dayLabel(iso) {
+    const d = new Date(iso), now = new Date();
+    const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+    const diff = (day(now) - day(d)) / 86400000;
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Yesterday";
+    return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
   }
 
   // Toggle the "Jump to present" bar based on scroll position.
@@ -1811,9 +1876,14 @@
       authorSpan.addEventListener("contextmenu", (e) => {
         e.preventDefault(); e.stopPropagation(); openUserMenu(m.authorId, e.clientX, e.clientY, authorSpan);
       });
+      // trust affordance: within 24h of deletion, show the countdown inline
+      const left = new Date(m.createdAt).getTime() + VANISH_MS - Date.now();
+      const soon = !m.saved && !m.pinned && left < 86400000;
       body.appendChild(h("div", { class: "meta" },
         authorSpan,
-        h("span", { class: "time", text: relativeTime(m.createdAt) })
+        h("span", { class: "time", text: relativeTime(m.createdAt) }),
+        soon ? h("span", { class: "vanish-soon" }, icon("hourglass", 11),
+          h("span", { text: vanishLabel(m).toLowerCase() })) : null
       ));
     }
 
@@ -3069,6 +3139,7 @@
   }
 
   function maybeSendTyping() {
+    if (media.shareTyping === false) return; // privacy: never broadcast typing
     if (!state.currentChannel || state.currentChannel.type !== "text") return;
     const now = Date.now();
     if (now - lastTypingSent > 2500) {
@@ -4517,6 +4588,14 @@
     // logout
     $("logout-btn").addEventListener("click", () => handleLogout(false));
 
+    // quick switcher hotkey
+    document.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (state.me) openQuickSwitcher();
+      }
+    });
+
     // composer
     const input = $("composer-input");
     input.addEventListener("keydown", (e) => {
@@ -4531,6 +4610,11 @@
         if (e.key === "Escape") { e.preventDefault(); ac.close(); return; }
       }
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+      // ↑ in an empty composer edits your last message (Discord/Slack muscle memory)
+      if (e.key === "ArrowUp" && !input.value) {
+        const last = [...state.messages].reverse().find((m) => state.me && m.authorId === state.me.id);
+        if (last) { e.preventDefault(); startEdit(last); }
+      }
     });
     input.addEventListener("input", () => { autoGrow(input); maybeSendTyping(); updateMentionAutocomplete(); updateEmojiAutocomplete(); });
     input.addEventListener("click", () => { updateMentionAutocomplete(); updateEmojiAutocomplete(); });
@@ -4561,10 +4645,12 @@
       }, { keepOpen: true });
     });
 
-    // reveal spoilers on click (delegated)
+    // reveal spoilers on click + copy code blocks (delegated)
     $("message-list").addEventListener("click", (e) => {
       const sp = e.target.closest(".spoiler");
       if (sp && !sp.classList.contains("revealed")) { e.stopPropagation(); sp.classList.add("revealed"); }
+      const cc = e.target.closest(".code-copy");
+      if (cc) { e.stopPropagation(); copyText(cc.nextElementSibling.textContent); }
     });
 
     // pinned messages viewer

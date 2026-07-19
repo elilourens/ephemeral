@@ -1064,6 +1064,36 @@ button .icon { pointer-events: none; }
   color: var(--danger);
 }
 
+/* day separators (Today / Yesterday / Jul 12) */
+.day-divider { display: flex; align-items: center; gap: 10px; margin: 14px 8px 6px; }
+.day-divider::before, .day-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.day-divider span { font-size: 11px; font-weight: 600; color: var(--text-faint); white-space: nowrap; }
+
+/* inline "vanishes in …" countdown on messages < 24h from deletion */
+.vanish-soon { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-faint); }
+.vanish-soon .icon { opacity: .7; }
+
+/* hover copy button on fenced code blocks */
+.md-code { position: relative; }
+.code-copy {
+  position: absolute; top: 6px; right: 6px; opacity: 0; font-size: 11px; font-weight: 600;
+  padding: 2px 8px; border-radius: var(--r-sm); border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-muted); transition: opacity .12s;
+}
+.md-code:hover .code-copy { opacity: 1; }
+.code-copy:hover { color: var(--text); background: var(--hover); }
+
+/* quick switcher (Ctrl/Cmd+K) */
+.qs-list { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; max-height: 340px; overflow-y: auto; }
+.qs-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: var(--r-sm); cursor: pointer; color: var(--text-muted);
+}
+.qs-item.active, .qs-item:hover { background: var(--hover); color: var(--text); }
+.qs-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qs-kind { font-size: 11px; color: var(--text-faint); }
+.qs-empty { padding: 12px; text-align: center; color: var(--text-faint); font-size: 13px; }
+
 /* toast */
 .toast-host { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .toast {

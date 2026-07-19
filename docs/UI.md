@@ -44,6 +44,18 @@ Rendered with Playwright (Chromium) at 1440×900 across auth, chat, voice, membe
 list, modals, and popovers; checked with: zoom to 50% (hierarchy), squint
 (what stands out), tab order (focus), contrast sampling. Ship the best result.
 
+## The photo backdrop (current look)
+
+The backdrop is a real photograph (`static/sky.jpg`, user-chosen cumulus shot)
+shown edge-to-edge, Apple-Landmarks style: every surface floats over it as
+light liquid glass. Legibility rules: the reading surface keeps the strongest
+tint (white .62), chrome panes .44-.58, and 28-36px blur averages the photo's
+local contrast so dark text stays >=7:1 over both the blown-white crowns and
+the near-black sky corners. `prefers-reduced-transparency` swaps everything
+for solid panels and drops the photo. The procedural clouds below are
+currently display:none in favor of the photo — delete the PHOTO LIQUID GLASS
+section at the end of style.css to bring the drawn sky back.
+
 ## The clouds
 
 Procedural cumulus clouds (stacked radial-gradient puffs — dense white cores,

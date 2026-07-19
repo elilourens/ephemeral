@@ -1735,3 +1735,77 @@ button:active, .btn:active { transform: scale(.94); }
     backdrop-filter: none;
   }
 }
+
+/* add-reaction pill INVERTED per user: bright by default, quiet on hover */
+.reaction.add {
+  background: rgba(255, 255, 255, .88);
+  color: #2b3547;
+  border-color: transparent;
+}
+.reaction.add:hover {
+  background: var(--hover);
+  color: var(--text-faint);
+  border-color: var(--border);
+}
+
+/* composer: the textarea melts into the bar (no boxed inner field) + roomier padding */
+.composer { padding: 8px 10px; }
+.composer textarea {
+  background: transparent;
+  border: none;
+  padding: 12px 12px;
+}
+
+/* ================== LIGHT CENTER + LIGHT FLOATING SURFACES ==============
+   User direction: the dark "whitey grey" hover/dropdown surfaces looked
+   wrong. The content pane, menus, modals and popovers become LIGHTER, MORE
+   TRANSPARENT glass — and the slate that used to be their background
+   (#2c3444) becomes their border, divider and text colour. The outer panes
+   (rail/sidebar/members) stay dark with white text. Done by re-scoping the
+   design tokens inside these containers. */
+#content, .content-header, .composer,
+.context-menu, .modal, .mention-pop, .profile-card, .emoji-pop,
+.msg-actions, .toast, .search-hit {
+  --text: #2c3444;
+  --text-muted: rgba(44, 52, 68, .78);
+  --text-faint: rgba(44, 52, 68, .58);
+  --text-link: #2f66b3;
+  --accent: #3d7fd9; --accent-hover: #2f66b3;
+  --accent-quiet: rgba(61, 127, 217, .14); --accent-line: rgba(61, 127, 217, .4);
+  --accent-ink: #ffffff;
+  --hover: rgba(44, 52, 68, .08); --active: rgba(44, 52, 68, .15);
+  --surface: rgba(255, 255, 255, .72); --surface-2: rgba(255, 255, 255, .55);
+  --border: rgba(44, 52, 68, .32); --border-strong: rgba(44, 52, 68, .55);
+  color: var(--text);
+}
+
+#content {
+  background: rgba(255, 255, 255, .42);
+  border: 1px solid rgba(44, 52, 68, .38);
+  box-shadow: 0 18px 44px rgba(8, 14, 26, .25);
+}
+.content-header, .composer {
+  background: rgba(255, 255, 255, .5);
+  border: 1px solid rgba(44, 52, 68, .34);
+  box-shadow: 0 10px 26px rgba(8, 14, 26, .16);
+}
+.context-menu, .modal, .mention-pop, .profile-card, .emoji-pop {
+  background: rgba(255, 255, 255, .58);
+  -webkit-backdrop-filter: blur(30px) saturate(160%);
+  backdrop-filter: blur(30px) saturate(160%);
+  border: 1px solid rgba(44, 52, 68, .4);
+  box-shadow: 0 28px 64px rgba(8, 14, 26, .35);
+}
+.modal { background: rgba(255, 255, 255, .68); }
+.toast { background: rgba(255, 255, 255, .8); color: #2c3444; border-color: rgba(44, 52, 68, .4); }
+
+/* inner elements retinted for the light surfaces */
+#content .text-input, .modal .text-input, .composer textarea { background: rgba(44, 52, 68, .07); color: var(--text); border-color: rgba(44, 52, 68, .3); }
+.composer textarea { background: transparent; border: none; }
+#content .md-code, #content .md-inline-code { background: rgba(44, 52, 68, .1); color: #222b3a; border-color: rgba(44, 52, 68, .22); }
+#content .spoiler { background: rgba(44, 52, 68, .8); }
+#content .spoiler.revealed { background: rgba(44, 52, 68, .1); }
+#content .attach-file, #content .unfurl, #content .embed-card, #content .yt-facade { background: rgba(255, 255, 255, .5); border-color: var(--border); }
+.message:hover { background: rgba(44, 52, 68, .06); }
+.reaction.add { background: rgba(44, 52, 68, .75); color: #f2f5f9; }
+.reaction.add:hover { background: var(--hover); color: var(--text-faint); }

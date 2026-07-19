@@ -2583,7 +2583,6 @@
     list.innerHTML = "";
 
     // admin add box
-    $("member-add").classList.toggle("hidden", !amAdmin());
 
     const sorted = [...state.members].sort((a, b) => {
       if (a.role !== b.role) return a.role === "admin" ? -1 : 1;
@@ -3460,17 +3459,28 @@
   }
 
   // ---- members (admin) ----
-  async function addMember() {
-    const input = $("member-add-input");
-    const username = input.value.trim();
-    if (!username) return;
-    try {
-      await API.addMember(state.currentGuild.id, username);
-      input.value = "";
-      state.members = await API.members(state.currentGuild.id);
-      renderMembers();
-      toast(`Added @${username}`);
-    } catch (e) { toast(e.message, true); }
+  function openAddMemberModal(g) {
+    const input = h("input", { class: "text-input", placeholder: "username" });
+    const err = h("div", { class: "modal-error" });
+    const submit = async () => {
+      const username = input.value.trim().replace(/^@/, "");
+      if (!username) { err.textContent = "Enter a username"; return; }
+      try {
+        await API.addMember(g.id, username);
+        state.members = await API.members(g.id);
+        renderMembers();
+        closeModal();
+        toast(`Added @${username}`);
+      } catch (e) { err.textContent = e.message; }
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    modal({
+      title: "Add People to " + g.name,
+      subtitle: "They join instantly as a member.",
+      body: [h("label", {}, "Username", input), err],
+      footer: [h("button", { class: "btn btn-secondary", text: "Cancel", onclick: closeModal }),
+        h("button", { class: "btn", text: "Add", onclick: submit })],
+    });
   }
   async function changeRole(m, role) {
     try {
@@ -4150,6 +4160,7 @@
         onClick: () => toggleMute(g.id) },
       amAdmin() ? { separator: true } : null,
       amAdmin() ? { label: "Edit Server", icon: icon("settings", 16), onClick: () => renameGuildFlow(g) } : null,
+      amAdmin() ? { label: "Add People", icon: icon("user-plus", 16), onClick: () => openAddMemberModal(g) } : null,
       amAdmin() ? { label: "Create Channel", icon: icon("plus", 16), onClick: () => openCreateChannelModal("text") } : null,
       amAdmin() ? { label: "Audit Log", icon: icon("scroll", 16), onClick: () => openAuditLogModal(g) } : null,
       amAdmin() ? { label: "Bans", icon: icon("shield", 16), onClick: () => openBansModal(g) } : null,
@@ -5167,8 +5178,6 @@
       clearTimeout(_membersResizeT);
       _membersResizeT = setTimeout(applyMembersVisibility, 150);
     });
-    $("member-add-btn").addEventListener("click", addMember);
-    $("member-add-input").addEventListener("keydown", (e) => { if (e.key === "Enter") addMember(); });
 
     // voice controls
     $("vc-mic").addEventListener("click", () => voice.toggleMic());

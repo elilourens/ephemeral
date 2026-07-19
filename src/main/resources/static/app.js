@@ -490,8 +490,8 @@
 
     messages: (cid, before) =>
       api(`/api/channels/${cid}/messages?limit=50` + (before ? `&before=${before}` : "")),
-    send: (cid, content, attachmentIds, replyToId) =>
-      api(`/api/channels/${cid}/messages`, { method: "POST", body: { content, attachmentIds, replyToId } }),
+    send: (cid, content, attachmentIds, replyToId, pingReply) =>
+      api(`/api/channels/${cid}/messages`, { method: "POST", body: { content, attachmentIds, replyToId, pingReply } }),
     editMsg: (id, content) => api(`/api/messages/${id}`, { method: "PATCH", body: { content } }),
     msgHistory: (id) => api(`/api/messages/${id}/history`),
     mentions: () => api(`/api/mentions`),
@@ -2020,18 +2020,29 @@
     if (input) input.focus();
   }
   function cancelReply() { state.replyingTo = null; renderReplyBar(); }
+  // Reply ping is STICKY (unlike Discord): the @ toggle remembers its last state.
+  const replyPingOn = () => localStorage.getItem("ephemeral_reply_ping") !== "off";
   function renderReplyBar() {
     const bar = $("reply-bar");
     if (!bar) return;
     bar.innerHTML = "";
     if (!state.replyingTo) { bar.classList.add("hidden"); return; }
     bar.classList.remove("hidden");
+    const ping = h("button", {
+      class: "reply-ping" + (replyPingOn() ? " on" : ""),
+      "aria-label": "Notify the author of the original message",
+      onclick: () => {
+        localStorage.setItem("ephemeral_reply_ping", replyPingOn() ? "off" : "on");
+        renderReplyBar();
+      },
+    }, icon("at-sign", 13), h("span", { text: replyPingOn() ? "ON" : "OFF" }));
     bar.append(
       h("div", { class: "reply-bar-info" },
         icon("reply", 14),
         h("span", { text: "Replying to " }),
         h("span", { class: "reply-bar-name", text: state.replyingTo.authorName })
       ),
+      ping,
       h("button", { class: "reply-bar-close", "aria-label": "Cancel reply", onclick: cancelReply }, icon("x", 16))
     );
   }
@@ -3139,6 +3150,7 @@
     pendingFiles = [];
     renderPending();
     const replyToId = state.replyingTo ? state.replyingTo.id : null;
+    const pingReply = replyToId ? replyPingOn() : null;
     cancelReply();
     closeMention();
     state.draftMentions = {};
@@ -3156,7 +3168,7 @@
 
     // 2) post the message
     try {
-      const msg = await API.send(channelId, content, attachmentIds, replyToId);
+      const msg = await API.send(channelId, content, attachmentIds, replyToId, pingReply);
       // start the slow-mode cooldown for this channel
       const slow = cch.slowModeSeconds || 0;
       if (slow > 0 && !amAdmin()) { slowUntil[channelId] = Date.now() + slow * 1000; updateSlowModeUI(cch); }

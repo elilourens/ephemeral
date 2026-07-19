@@ -1083,6 +1083,15 @@ button .icon { pointer-events: none; }
 .md-code:hover .code-copy { opacity: 1; }
 .code-copy:hover { color: var(--text); background: var(--hover); }
 
+/* sticky reply-ping toggle in the reply bar */
+.reply-ping {
+  display: inline-flex; align-items: center; gap: 3px; margin-left: auto;
+  font-size: 10px; font-weight: 700; letter-spacing: .4px; padding: 2px 8px;
+  border-radius: var(--r-sm); border: 1px solid var(--border); color: var(--text-faint);
+}
+.reply-ping.on { color: var(--accent); border-color: var(--accent-quiet); background: var(--accent-quiet); }
+.reply-ping + .reply-bar-close { margin-left: 6px; }
+
 /* edit history modal */
 .edited { cursor: pointer; }
 .edited:hover { text-decoration: underline; }

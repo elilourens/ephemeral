@@ -90,7 +90,8 @@ public class MessageService {
     }
 
     @Transactional
-    public MessageDto send(UUID userId, UUID channelId, String content, List<UUID> attachmentIds, UUID replyToId) {
+    public MessageDto send(UUID userId, UUID channelId, String content, List<UUID> attachmentIds, UUID replyToId,
+                           Boolean pingReply) {
         UUID guildId = guilds.requireChannelMember(userId, channelId);
         // Messages are allowed in text AND voice channels (text-in-voice chat).
         // Slow mode: non-admins must wait between posts.
@@ -137,7 +138,13 @@ public class MessageService {
                     """, new MapSqlParameterSource()
                     .addValue("m", id).addValue("ids", attachmentIds).addValue("o", userId));
         }
-        for (UUID mentioned : parseMentions(body, guildId)) {
+        Set<UUID> pinged = new LinkedHashSet<>(parseMentions(body, guildId));
+        // replying pings the original author unless the sender opted out (pingReply=false)
+        if (validReply != null && !Boolean.FALSE.equals(pingReply)) {
+            jdbc.queryForList("select author_id from messages where id = :r",
+                    Map.of("r", validReply), UUID.class).forEach(pinged::add);
+        }
+        for (UUID mentioned : pinged) {
             jdbc.update("insert into message_mention (message_id, user_id) values (:m, :u) on conflict do nothing",
                     Map.of("m", id, "u", mentioned));
             if (!mentioned.equals(userId)) {

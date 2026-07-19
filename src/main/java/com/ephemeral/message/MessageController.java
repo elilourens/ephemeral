@@ -18,7 +18,7 @@ public class MessageController {
         this.messages = messages;
     }
 
-    public record SendMessageRequest(String content, List<UUID> attachmentIds, UUID replyToId) {
+    public record SendMessageRequest(String content, List<UUID> attachmentIds, UUID replyToId, Boolean pingReply) {
     }
 
     public record EditMessageRequest(String content) {
@@ -42,7 +42,7 @@ public class MessageController {
     @PostMapping("/api/channels/{channelId}/messages")
     public MessageDto send(@CurrentUser AuthUser user, @PathVariable UUID channelId,
                            @RequestBody SendMessageRequest req) {
-        return messages.send(user.id(), channelId, req.content(), req.attachmentIds(), req.replyToId());
+        return messages.send(user.id(), channelId, req.content(), req.attachmentIds(), req.replyToId(), req.pingReply());
     }
 
     @PatchMapping("/api/messages/{id}")

@@ -742,5 +742,12 @@ distinct override boundary plus the default sweep (DMs stay on the default).
 Admin UI: channel right-click → "Auto-Delete Timer…" (1 h / 1 d / 7 d / 30 d /
 default); the header pill, inline countdowns, and vanish labels all follow the
 active channel's window. Shortening a timer really deletes older history on the
-next sweep (stated in the dialog). **38/38 JUnit** (adds override + reset
-coverage); browser suite `retention-check` 4/4.
+next sweep (stated in the dialog).
+
+**Reply pings with a sticky silent toggle** (the #1 Discord complaint in the
+research): replying now notifies the original author (a mention + badge) unless
+the reply bar's @ toggle is off — and unlike Discord, the toggle REMEMBERS its
+last state (localStorage). Never self-pings.
+
+**39/39 JUnit** (adds vanish-timer override/reset + reply-ping loud/silent/self
+coverage); browser suites retention-check 4/4 and ping toggle sticky-verified.

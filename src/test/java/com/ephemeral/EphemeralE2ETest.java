@@ -805,6 +805,39 @@ class EphemeralE2ETest {
     }
 
     @Test
+    void replyPingsTheOriginalAuthorUnlessSilenced() throws Exception {
+        Session admin = register(uniqueName());
+        Session bob = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Pings"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+
+        UUID original = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
+                bob.token(), Map.of("content", "original"), 200).get("id").asText());
+
+        // default (pingReply omitted) notifies the original author
+        call("POST", "/api/channels/" + chan + "/messages", admin.token(),
+                Map.of("content", "loud reply", "replyToId", original), 200);
+        assertThat(mentionCount(bob, chan)).isEqualTo(1);
+        // silent reply doesn't
+        call("POST", "/api/channels/" + chan + "/messages", admin.token(),
+                Map.of("content", "quiet reply", "replyToId", original, "pingReply", false), 200);
+        assertThat(mentionCount(bob, chan)).isEqualTo(1);
+        // replying to yourself never self-pings
+        call("POST", "/api/channels/" + chan + "/messages", bob.token(),
+                Map.of("content", "self reply", "replyToId", original), 200);
+        assertThat(mentionCount(bob, chan)).isEqualTo(1);
+    }
+
+    private int mentionCount(Session who, UUID chan) throws Exception {
+        Integer n = jdbc.queryForObject(
+                "select coalesce(max(mention_count), 0) from read_state where user_id = :u and channel_id = :c",
+                Map.of("u", who.userId(), "c", chan), Integer.class);
+        return n == null ? 0 : n;
+    }
+
+    @Test
     void perChannelVanishTimerOverridesDefault() throws Exception {
         Session s = register(uniqueName());
         JsonNode guild = call("POST", "/api/guilds", s.token(), Map.of("name", "Timers"), 200);

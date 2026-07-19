@@ -27,10 +27,11 @@ public class VoiceController {
     @PostMapping("/api/channels/{channelId}/voice-token")
     public LiveKitTokenService.Token voiceToken(@CurrentUser AuthUser user, @PathVariable UUID channelId) {
         UUID guildId = guilds.requireChannelMember(user.id(), channelId);
-        if (!"voice".equals(guilds.channelType(channelId))) {
+        String type = guilds.channelType(channelId);
+        if (!"voice".equals(type) && !"dm".equals(type)) { // DMs host calls too
             throw ApiException.badRequest("not a voice channel");
         }
-        boolean admin = guilds.role(user.id(), guildId).map("admin"::equals).orElse(false);
+        boolean admin = guildId != null && guilds.role(user.id(), guildId).map("admin"::equals).orElse(false);
         // Enforce the user limit (admins bypass; someone already connected can reconnect).
         int limit = guilds.userLimitOf(channelId);
         if (limit > 0 && !admin

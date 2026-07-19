@@ -227,6 +227,15 @@ public class MessageService {
     public MessageDto save(UUID userId, UUID messageId) {
         UUID channelId = channelOf(messageId);
         guilds.requireChannelMember(userId, channelId);
+        // you may only preserve your OWN posts from the 7-day vanish
+        List<UUID> author = jdbc.queryForList("select author_id from messages where id = :m",
+                Map.of("m", messageId), UUID.class);
+        if (author.isEmpty()) {
+            throw ApiException.notFound("message not found");
+        }
+        if (!author.get(0).equals(userId)) {
+            throw ApiException.forbidden("you can only save your own messages");
+        }
         jdbc.update("""
                 insert into saves (user_id, message_id) values (:u, :m)
                 on conflict (user_id, message_id) do nothing
@@ -311,14 +320,14 @@ public class MessageService {
         List<UUID> replyIds = rows.stream().map(Row::replyToId).filter(Objects::nonNull).distinct().toList();
         if (!replyIds.isEmpty()) {
             jdbc.query("""
-                    select m.id, u.display_name as an, m.content
+                    select m.id, m.author_id as auid, u.display_name as an, m.content
                     from messages m join users u on u.id = m.author_id
                     where m.id in (:ids)
                     """, Map.of("ids", replyIds), (rs, i) -> {
                 UUID rid = rs.getObject("id", UUID.class);
                 String c = rs.getString("content");
                 String snippet = c == null ? "" : (c.length() > 140 ? c.substring(0, 140) + "…" : c);
-                replies.put(rid, new ReplyRef(rid, rs.getString("an"), snippet));
+                replies.put(rid, new ReplyRef(rid, rs.getObject("auid", UUID.class), rs.getString("an"), snippet));
                 return null;
             });
         }

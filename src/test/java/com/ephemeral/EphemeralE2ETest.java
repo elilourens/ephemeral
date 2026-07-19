@@ -683,7 +683,7 @@ class EphemeralE2ETest {
     }
 
     @Test
-    void perUserSaveExemptsWhileAnyoneStillSaved() throws Exception {
+    void onlyTheAuthorCanSaveTheirMessage() throws Exception {
         Session admin = register(uniqueName());
         Session bob = register(uniqueName());
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Saves"), 200);
@@ -694,15 +694,12 @@ class EphemeralE2ETest {
         UUID msg = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
                 admin.token(), Map.of("content", "keep me"), 200).get("id").asText());
 
+        // privacy rule: nobody else may exempt YOUR words from the 7-day vanish
+        call("POST", "/api/messages/" + msg + "/save", bob.token(), null, 403);
         assertThat(call("POST", "/api/messages/" + msg + "/save", admin.token(), null, 200)
                 .get("saved").asBoolean()).isTrue();
-        assertThat(call("POST", "/api/messages/" + msg + "/save", bob.token(), null, 200)
-                .get("saved").asBoolean()).isTrue();
-        // admin unsaves -> still saved because bob still has it saved
+        // author unsaves -> exemption lifts
         assertThat(call("DELETE", "/api/messages/" + msg + "/save", admin.token(), null, 200)
-                .get("saved").asBoolean()).isTrue();
-        // bob unsaves -> now nobody saved it -> exemption lifts
-        assertThat(call("DELETE", "/api/messages/" + msg + "/save", bob.token(), null, 200)
                 .get("saved").asBoolean()).isFalse();
     }
 

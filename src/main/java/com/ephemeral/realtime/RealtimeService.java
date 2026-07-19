@@ -117,17 +117,29 @@ public class RealtimeService {
 
     // ---- outbound events --------------------------------------------------
 
+    // Guild channels fan out to guild subscribers (so unread badges work in
+    // channels you aren't viewing); DM channels have no guild, so they fan out to
+    // that channel's direct subscribers instead.
+    private void broadcastMessageEvent(UUID channelId, Map<String, Object> envelope) {
+        UUID g = guildOf(channelId);
+        if (g != null) {
+            broadcastGuild(g, envelope, null);
+        } else {
+            broadcast(channelId, envelope, null);
+        }
+    }
+
     public void messageCreated(MessageDto message) {
-        broadcastGuild(guildOf(message.channelId()), Map.of("type", "message", "data", message), null);
+        broadcastMessageEvent(message.channelId(), Map.of("type", "message", "data", message));
     }
 
     public void messageDeleted(UUID channelId, UUID messageId) {
-        broadcastGuild(guildOf(channelId), Map.of("type", "message_deleted",
-                "data", Map.of("channelId", channelId, "messageId", messageId)), null);
+        broadcastMessageEvent(channelId, Map.of("type", "message_deleted",
+                "data", Map.of("channelId", channelId, "messageId", messageId)));
     }
 
     public void messageUpdated(MessageDto message) {
-        broadcastGuild(guildOf(message.channelId()), Map.of("type", "message_updated", "data", message), null);
+        broadcastMessageEvent(message.channelId(), Map.of("type", "message_updated", "data", message));
     }
 
     public void typing(UUID channelId, AuthUser user, WebSocketSession except) {

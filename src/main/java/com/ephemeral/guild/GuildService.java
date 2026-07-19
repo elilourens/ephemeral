@@ -66,9 +66,12 @@ public class GuildService {
     }
 
     public UUID guildIdOfChannel(UUID channelId) {
-        return jdbc.queryForList("select guild_id from channels where id = :c",
-                        Map.of("c", channelId), UUID.class).stream().findFirst()
-                .orElseThrow(() -> ApiException.notFound("channel not found"));
+        List<UUID> r = jdbc.queryForList("select guild_id from channels where id = :c",
+                Map.of("c", channelId), UUID.class);
+        if (r.isEmpty()) {
+            throw ApiException.notFound("channel not found");
+        }
+        return r.get(0); // null for a DM channel (avoids Stream.findFirst NPE on null)
     }
 
     public String channelType(UUID channelId) {
@@ -91,6 +94,12 @@ public class GuildService {
         }
         UUID guildId = (UUID) rows.get(0)[0];
         boolean adminOnly = (boolean) rows.get(0)[1];
+        if (guildId == null) { // DM channel — access is by the participant list
+            if (!isDmMember(userId, channelId)) {
+                throw ApiException.forbidden("not a participant in this conversation");
+            }
+            return null;
+        }
         requireMember(userId, guildId);
         if (adminOnly && !isAdmin(userId, guildId)) {
             throw ApiException.forbidden("this channel is admin-only");
@@ -98,7 +107,20 @@ public class GuildService {
         return guildId;
     }
 
+    public boolean isDmMember(UUID userId, UUID channelId) {
+        Integer n = jdbc.queryForObject(
+                "select count(*) from dm_members where channel_id = :c and user_id = :u",
+                Map.of("c", channelId, "u", userId), Integer.class);
+        return n != null && n > 0;
+    }
+
     public boolean isChannelMember(UUID userId, UUID channelId) {
+        // DM channels: membership is the participant list, not a guild role
+        List<UUID> g = jdbc.queryForList("select guild_id from channels where id = :c",
+                Map.of("c", channelId), UUID.class);
+        if (!g.isEmpty() && g.get(0) == null) {
+            return isDmMember(userId, channelId);
+        }
         var rows = jdbc.query("""
                 select c.admin_only, m.role from channels c
                 join memberships m on m.guild_id = c.guild_id and m.user_id = :u

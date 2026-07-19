@@ -1912,3 +1912,27 @@ button:active, .btn:active { transform: scale(.94); }
 .emoji-cell .custom-emoji { height: 24px; max-width: 30px; vertical-align: middle; }
 .custom-emoji.lg { height: 30px; max-width: 60px; }
 .emoji-opt-em.custom-emoji { width: 24px; height: 20px; }
+
+/* ---- big profile modal, avatar images, banner, embed ---- */
+.avatar .avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.avatar.has-img { color: transparent; }
+.profile-card.profile-modal {
+  position: relative; width: min(560px, 94vw); max-height: 84vh; overflow-y: auto;
+}
+.profile-modal .profile-banner { height: 160px; background: linear-gradient(120deg, rgba(125,180,247,.5), rgba(255,255,255,.15)); }
+.profile-modal .profile-banner.has-img { background-size: cover; background-position: center; }
+.profile-modal .profile-avatar { width: 96px; height: 96px; font-size: 30px; margin-top: -48px; margin-left: 22px; }
+.profile-modal .profile-info { padding: 12px 22px 22px; }
+.profile-embed { width: 100%; aspect-ratio: 16 / 9; border: 1px solid rgba(255,255,255,.25); margin-top: 6px; }
+.profile-embed-link { display: block; margin-top: 6px; color: var(--text-link); overflow-wrap: anywhere; }
+
+/* the channel-group + button: hover ring centered on the glyph */
+.channel-group-header button {
+  width: 24px; height: 24px; padding: 0; display: grid; place-items: center;
+  border-radius: 50%; color: var(--text-faint);
+}
+.channel-group-header button:hover { background: rgba(255, 255, 255, .14); color: var(--text); }
+
+/* voice-message timer: breathing room, no cramped mono squeeze */
+.vm { gap: 12px; padding: 8px 14px; }
+.vm-time { min-width: 44px; letter-spacing: .08em; font-size: 12px; }

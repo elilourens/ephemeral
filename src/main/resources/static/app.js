@@ -341,12 +341,24 @@
    * Avatar circle. When `userId` is supplied it gains a live status dot and
    * becomes a click target that opens that user's profile card.
    */
+  function noteAvatar(userId, url) {
+    if (!userId) return;
+    state.avatars = state.avatars || {};
+    if (url) state.avatars[userId] = url; else delete state.avatars[userId];
+  }
   function avatar(name, seed, cls = "", userId = null) {
     const el = h("div", {
       class: "avatar " + cls,
       style: `background:${colorFor(seed || name)}`,
       text: initials(name),
     });
+    const uid = userId || seed;
+    const url = uid && state.avatars && state.avatars[uid];
+    if (url) {
+      el.textContent = "";
+      el.classList.add("has-img");
+      el.appendChild(h("img", { class: "avatar-img", src: url, alt: "" }));
+    }
     if (userId != null) {
       el.classList.add("has-status");
       el.appendChild(statusDot(userId));
@@ -2627,6 +2639,7 @@
     const col = $("member-column");
     const list = $("member-list");
     $("member-count").textContent = state.members.length;
+    for (const m of state.members) noteAvatar(m.userId, m.avatarUrl);
     list.innerHTML = "";
 
     // admin add box
@@ -2842,6 +2855,7 @@
 
   async function loadDms() {
     try { state.dms = await API.listDms(); } catch { state.dms = state.dms || []; }
+    for (const d of state.dms || []) for (const o of d.others || []) noteAvatar(o.id, o.avatarUrl);
     ws.subscribeDms((state.dms || []).map((d) => d.channelId));
     if (state.dmMode) renderDmSidebar();
     renderGuildRail();
@@ -3115,6 +3129,7 @@
   async function bootstrapSession() {
     try {
       state.me = await API.me();
+      API.getUser(state.me.id).then((p) => { noteAvatar(p.id, p.avatarUrl); renderUserBar(); }).catch(() => {});
     } catch (e) {
       handleLogout(false);
       return;
@@ -4000,6 +4015,7 @@
   }
 
   function positionCard(card, anchorEl) {
+    if (!anchorEl || card.classList.contains("profile-modal")) return;
     card.style.position = "fixed";
     card.style.visibility = "hidden";
     const place = () => {
@@ -4938,19 +4954,23 @@
   // ---- profile card ----
   async function openProfileCard(userId, anchorEl) {
     if (!userId) return;
-    const card = h("div", { class: "profile-card" },
+    const card = h("div", { class: "profile-card profile-modal" },
       h("div", { class: "profile-loading", text: "Loading…" }));
-    popover(anchorEl, card);
+    const backdrop = h("div", { class: "modal-backdrop",
+      onclick: (e) => { if (e.target === backdrop) backdrop.remove(); } }, card);
+    const esc = (e) => { if (e.key === "Escape") { backdrop.remove(); document.removeEventListener("keydown", esc); } };
+    document.addEventListener("keydown", esc);
+    $("modal-root").appendChild(backdrop);
     let u;
     try {
       u = await API.getUser(userId);
     } catch (e) {
       card.innerHTML = "";
       card.appendChild(h("div", { class: "profile-loading", text: e.message }));
-      positionCard(card, anchorEl);
       return;
     }
-    renderProfileCard(card, u, anchorEl);
+    noteAvatar(u.id, u.avatarUrl);
+    renderProfileCard(card, u, null);
   }
 
   function memberSince(iso) {
@@ -5009,8 +5029,37 @@
         onclick: () => openDmWithUser(userId) }, icon("message-circle", 15), h("span", { text: " Message" })));
     }
 
-    card.append(h("div", { class: "profile-banner" }), av, info);
+    // allowlisted providers only — never an arbitrary iframe in someone's browser
+    if (u.profileEmbed) {
+      const em = providerEmbedUrl(u.profileEmbed);
+      const sect = h("div", { class: "card-sect" }, h("div", { class: "card-label", text: "Featured" }));
+      if (em) {
+        sect.appendChild(h("iframe", { class: "profile-embed", src: em, title: "Featured embed",
+          sandbox: "allow-scripts allow-same-origin allow-presentation allow-popups",
+          allow: "autoplay; encrypted-media; picture-in-picture; fullscreen", loading: "lazy" }));
+      } else {
+        sect.appendChild(h("a", { class: "profile-embed-link", href: u.profileEmbed,
+          target: "_blank", rel: "noopener noreferrer", text: u.profileEmbed }));
+      }
+      info.appendChild(sect);
+    }
+    const banner = h("div", { class: "profile-banner" });
+    if (u.bannerUrl) {
+      banner.classList.add("has-img");
+      banner.style.backgroundImage = `url(${u.bannerUrl})`;
+    }
+    card.append(banner, av, info);
     positionCard(card, anchorEl);
+  }
+
+  // Rebuild embed URLs from extracted ids — the raw user URL is never framed.
+  function providerEmbedUrl(url) {
+    let m;
+    if ((m = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{6,15})/.exec(url))) return "https://www.youtube-nocookie.com/embed/" + m[1];
+    if ((m = /vimeo\.com\/(\d+)/.exec(url))) return "https://player.vimeo.com/video/" + m[1];
+    if ((m = /open\.spotify\.com\/(track|album|playlist|artist)\/([A-Za-z0-9]+)/.exec(url))) return "https://open.spotify.com/embed/" + m[1] + "/" + m[2];
+    if ((m = /twitch\.tv\/([A-Za-z0-9_]{3,30})$/.exec(url))) return "https://player.twitch.tv/?channel=" + m[1] + "&parent=" + location.hostname;
+    return null;
   }
 
   function renderProfileEdit(card, u, anchorEl) {
@@ -5021,13 +5070,42 @@
     cs.value = u.customStatus || "";
     const bio = h("textarea", { maxlength: "400", placeholder: "Tell people about yourself" });
     bio.value = u.bio || "";
+    const embed = h("input", { class: "text-input", maxlength: "300",
+      placeholder: "YouTube / Vimeo / Spotify / Twitch link (embeds), or any https:// link" });
+    embed.value = u.profileEmbed || "";
     const err = h("div", { class: "modal-error" });
+
+    // avatar + banner uploads (own images, set on Save)
+    let avatarId = null, clearAvatar = false, bannerId = null, clearBanner = false;
+    const mediaRow = (label, getUrl, onPick, onClear) => {
+      const file = h("input", { type: "file", accept: "image/*", class: "hidden" });
+      file.addEventListener("change", async () => {
+        const f = file.files && file.files[0];
+        file.value = "";
+        if (!f) return;
+        if (f.size > 2_000_000) { err.textContent = label + " images are capped at 2 MB"; return; }
+        try { const up = await API.upload(f); onPick(up.id); err.textContent = ""; toast(label + " ready — hit Save"); }
+        catch (e2) { err.textContent = e2.message; }
+      });
+      return h("div", { class: "icon-edit-btns" },
+        h("button", { class: "btn btn-secondary", text: "Change " + label.toLowerCase(),
+          onclick: () => file.click() }),
+        getUrl() ? h("button", { class: "btn btn-secondary", text: "Remove", onclick: () => { onClear(); toast(label + " will be removed on Save"); } }) : null,
+        file);
+    };
+    const avatarRow = mediaRow("Avatar", () => u.avatarUrl,
+      (id) => { avatarId = id; clearAvatar = false; }, () => { clearAvatar = true; avatarId = null; });
+    const bannerRow = mediaRow("Banner", () => u.bannerUrl,
+      (id) => { bannerId = id; clearBanner = false; }, () => { clearBanner = true; bannerId = null; });
 
     const save = async () => {
       const body = {
         displayName: dn.value.trim() || null,
         customStatus: cs.value.trim() || null,
         bio: bio.value.trim() || null,
+        profileEmbed: embed.value.trim(),
+        avatarId, clearAvatar: clearAvatar || undefined,
+        bannerId, clearBanner: clearBanner || undefined,
       };
       try {
         const updated = await API.updateMe(body);
@@ -5038,6 +5116,7 @@
         }
         const prev = state.presence[u.id] || { online: true, status: "online" };
         state.presence[u.id] = Object.assign({}, prev, { customStatus: merged.customStatus || null });
+        noteAvatar(u.id, merged.avatarUrl);
         applyPresence();
         renderMembers();
         renderMessages();
@@ -5050,6 +5129,9 @@
       h("label", {}, "Display name", dn),
       h("label", {}, "Custom status", cs),
       h("label", {}, "About", bio),
+      h("label", {}, "Featured link", embed),
+      h("label", {}, "Avatar", avatarRow),
+      h("label", {}, "Banner", bannerRow),
       err,
       h("div", { class: "profile-form-actions" },
         h("button", { class: "btn btn-secondary", text: "Cancel", onclick: () => renderProfileCard(card, u, anchorEl) }),

@@ -472,12 +472,13 @@ public class GuildService {
     public List<MemberDto> listMembers(UUID userId, UUID guildId) {
         requireMember(userId, guildId);
         return jdbc.query("""
-                select u.id as uid, u.username, u.display_name, m.role
+                select u.id as uid, u.username, u.display_name, m.role, u.avatar_id
                 from memberships m join users u on u.id = m.user_id
                 where m.guild_id = :g order by m.role, u.username
                 """, Map.of("g", guildId),
                 (rs, i) -> new MemberDto(rs.getObject("uid", UUID.class), rs.getString("username"),
-                        rs.getString("display_name"), rs.getString("role")));
+                        rs.getString("display_name"), rs.getString("role"),
+                        rs.getObject("avatar_id", UUID.class) == null ? null : "/api/files/" + rs.getObject("avatar_id", UUID.class)));
     }
 
     public MemberDto addMember(UUID userId, UUID guildId, String username) {
@@ -499,7 +500,7 @@ public class GuildService {
         if (inserted > 0) {
             audit.log(guildId, userId, "member.add", targetId, null);
         }
-        return new MemberDto(targetId, username.trim().toLowerCase(), (String) found.get(0)[1], "member");
+        return new MemberDto(targetId, username.trim().toLowerCase(), (String) found.get(0)[1], "member", null);
     }
 
     public void setRole(UUID userId, UUID guildId, UUID targetUserId, String newRole) {

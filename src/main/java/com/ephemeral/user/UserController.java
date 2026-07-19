@@ -22,7 +22,10 @@ public class UserController {
         this.mapper = mapper;
     }
 
-    public record UpdateProfileRequest(String displayName, String bio, String status, String customStatus) {
+    public record UpdateProfileRequest(String displayName, String bio, String status, String customStatus,
+                                       java.util.UUID avatarId, Boolean clearAvatar,
+                                       java.util.UUID bannerId, Boolean clearBanner,
+                                       String profileEmbed) {
     }
 
     @GetMapping("/api/users/{id}")
@@ -32,7 +35,9 @@ public class UserController {
 
     @PatchMapping("/api/users/me")
     public UserProfileDto updateMe(@CurrentUser AuthUser user, @RequestBody UpdateProfileRequest req) {
-        return users.updateProfile(user.id(), req.displayName(), req.bio(), req.status(), req.customStatus());
+        return users.updateProfile(user.id(), req.displayName(), req.bio(), req.status(), req.customStatus(),
+                req.avatarId(), Boolean.TRUE.equals(req.clearAvatar()),
+                req.bannerId(), Boolean.TRUE.equals(req.clearBanner()), req.profileEmbed());
     }
 
     /** Persisted per-user settings (mutes, notification + voice prefs) — survives restarts. */

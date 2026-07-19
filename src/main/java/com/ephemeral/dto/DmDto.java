@@ -12,5 +12,5 @@ import java.util.UUID;
  */
 public record DmDto(UUID channelId, boolean group, String name, UUID ownerId, List<DmUser> others,
                     Instant lastMessageAt, boolean unread) {
-    public record DmUser(UUID id, String username, String displayName) {}
+    public record DmUser(UUID id, String username, String displayName, String avatarUrl) {}
 }

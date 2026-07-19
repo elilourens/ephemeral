@@ -82,12 +82,13 @@ public class DmService {
         }
         Object[] hd = head.get(0);
         List<DmDto.DmUser> others = jdbc.query("""
-                select u.id, u.username, u.display_name from dm_members dm
+                select u.id, u.username, u.display_name, u.avatar_id from dm_members dm
                 join users u on u.id = dm.user_id
                 where dm.channel_id = :c and dm.user_id <> :u
                 order by u.username
                 """, Map.of("c", channelId, "u", userId), (rs, i) ->
-                new DmDto.DmUser(rs.getObject("id", UUID.class), rs.getString("username"), rs.getString("display_name")));
+                new DmDto.DmUser(rs.getObject("id", UUID.class), rs.getString("username"), rs.getString("display_name"),
+                        rs.getObject("avatar_id", UUID.class) == null ? null : "/api/files/" + rs.getObject("avatar_id", UUID.class)));
         boolean group = hd[0] == null;
         String name = group && hd[1] != null && !"dm".equals(hd[1]) ? (String) hd[1] : "";
         UUID lastId = (UUID) hd[3];

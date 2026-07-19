@@ -10,5 +10,8 @@ public record UserProfileDto(
         String bio,
         String status,
         String customStatus,
+        String avatarUrl,
+        String bannerUrl,
+        String profileEmbed,
         Instant createdAt) {
 }

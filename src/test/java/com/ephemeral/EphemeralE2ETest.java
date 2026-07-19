@@ -867,6 +867,44 @@ class EphemeralE2ETest {
     }
 
     @Test
+    void profileAvatarBannerAndEmbed() throws Exception {
+        Session s = register(uniqueName());
+        Session other = register(uniqueName());
+        UUID av = uploadImage(s.token(), "face.png");
+        UUID bn = uploadImage(s.token(), "banner.png");
+
+        // text upload rejected; someone else's upload rejected; bad embed rejected
+        UUID txt = uploadFile(s.token(), "x.txt", "not an image");
+        call("PATCH", "/api/users/me", s.token(), Map.of("avatarId", txt), 400);
+        UUID foreign = uploadImage(other.token(), "their.png");
+        call("PATCH", "/api/users/me", s.token(), Map.of("avatarId", foreign), 400);
+        call("PATCH", "/api/users/me", s.token(), Map.of("profileEmbed", "javascript:alert(1)"), 400);
+
+        JsonNode p = call("PATCH", "/api/users/me", s.token(), Map.of(
+                "avatarId", av, "bannerId", bn,
+                "profileEmbed", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"), 200);
+        assertThat(p.get("avatarUrl").asText()).isEqualTo("/api/files/" + av);
+        assertThat(p.get("bannerUrl").asText()).isEqualTo("/api/files/" + bn);
+        assertThat(p.get("profileEmbed").asText()).contains("youtube.com");
+
+        // avatars ride the member list; old referenced media survives the purge
+        JsonNode guild = call("POST", "/api/guilds", s.token(), Map.of("name", "Facewall"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        JsonNode members = call("GET", "/api/guilds/" + gid + "/members", s.token(), null, 200);
+        assertThat(members.get(0).get("avatarUrl").asText()).isEqualTo("/api/files/" + av);
+        UUID oldAv = Ids.boundary(Instant.now().minus(8, ChronoUnit.DAYS));
+        insertAttachment(oldAv, null, s.userId());
+        jdbc.update("update users set avatar_id = :a where id = :u", Map.of("a", oldAv, "u", s.userId()));
+        retention.purgeExpired();
+        assertThat(jdbc.queryForObject("select count(*) from attachments where id = :a",
+                Map.of("a", oldAv), Integer.class)).isEqualTo(1);
+
+        // clearing works
+        assertThat(call("PATCH", "/api/users/me", s.token(), Map.of("clearAvatar", true, "clearBanner", true,
+                "profileEmbed", ""), 200).get("avatarUrl").isNull()).isTrue();
+    }
+
+    @Test
     void customEmojiLifecycle() throws Exception {
         Session admin = register(uniqueName());
         Session member = register(uniqueName());

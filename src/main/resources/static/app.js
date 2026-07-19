@@ -1660,7 +1660,9 @@
     if (state.dmMode) { renderDmSidebar(); return; }
     const g = state.currentGuild;
     const gn = $("guild-name");
-    gn.textContent = g ? g.name : "ephemeral";
+    gn.innerHTML = "";
+    gn.append(h("span", { class: "gn-text", text: g ? g.name : "ephemeral" }),
+      g ? h("span", { class: "gn-caret" }, icon("chevron-down", 16)) : null);
     gn.classList.toggle("clickable", !!g);
     gn.onclick = g ? (e) => { e.stopPropagation(); const r = gn.getBoundingClientRect(); openGuildMenu(g, r.left, r.bottom + 4); } : null;
     gn.oncontextmenu = g ? (e) => { e.preventDefault(); openGuildMenu(g, e.clientX, e.clientY); } : null;
@@ -2711,9 +2713,11 @@
       else if (chan) selectChannel(chan.id);
     };
     bar.append(
+      // folder tab sticking out above the bar: where you're connected
+      h("div", { class: "vbar-tab", "aria-label": "Return to call", onclick: returnToCall,
+        text: isDm ? "DM call" : label }),
       h("div", { class: "vbar-info", "aria-label": "Return to call", onclick: returnToCall },
-        h("span", { class: "vbar-status" }, icon("volume", 13), h("span", { text: " Voice Connected" })),
-        h("span", { class: "vbar-channel", text: label })
+        h("span", { class: "vbar-status" }, icon("volume", 13), h("span", { text: " Connected" }))
       ),
       h("div", { class: "vbar-actions" },
         h("button", { class: "vbar-btn" + (voice.mic ? "" : " off"), "aria-label": "Mute / unmute",

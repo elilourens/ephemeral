@@ -1083,6 +1083,30 @@ button .icon { pointer-events: none; }
 .md-code:hover .code-copy { opacity: 1; }
 .code-copy:hover { color: var(--text); background: var(--hover); }
 
+/* group DMs */
+.group-avatar { display: inline-grid; place-items: center; background: var(--accent-quiet); color: var(--accent); border-radius: 50%; }
+.dm-count { font-size: 10px; font-weight: 700; color: var(--text-faint); border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; }
+.dm-live { color: var(--ok, #2eb67d); display: inline-flex; }
+.dm-members-count { font-size: 12px; color: var(--text-muted); cursor: pointer; margin-right: auto; }
+.dm-members-count:hover { text-decoration: underline; }
+.dm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.dm-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--accent-quiet); color: var(--accent);
+  font-size: 12px; font-weight: 600; padding: 2px 6px 2px 10px; border-radius: 12px; }
+.dm-chip button { color: inherit; font-size: 14px; line-height: 1; padding: 0 3px; }
+.dm-member-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.dm-member-row .btn-sm { margin-left: auto; padding: 3px 10px; font-size: 12px; }
+
+/* clickable incoming-call toast */
+.toast-call { display: flex; align-items: center; gap: 8px; cursor: pointer; border-color: var(--accent); }
+.toast-call:hover { background: var(--hover); }
+
+/* audit log */
+.audit-list { display: flex; flex-direction: column; max-height: 380px; overflow-y: auto; }
+.audit-row { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.audit-row:last-child { border-bottom: none; }
+.audit-what { flex: 1; color: var(--text); overflow-wrap: anywhere; }
+.audit-when { color: var(--text-faint); font-size: 11px; white-space: nowrap; }
+
 /* sticky reply-ping toggle in the reply bar */
 .reply-ping {
   display: inline-flex; align-items: center; gap: 3px; margin-left: auto;

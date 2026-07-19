@@ -34,8 +34,19 @@ public class GuildService {
             rs.getInt("user_limit"),
             (Long) rs.getObject("retention_ms"));
 
-    public GuildService(NamedParameterJdbcTemplate jdbc) {
+    private final AuditService audit;
+
+    public GuildService(NamedParameterJdbcTemplate jdbc, AuditService audit) {
         this.jdbc = jdbc;
+        this.audit = audit;
+    }
+
+    /** Banned users cannot join or be added; checked on every entry path. */
+    public boolean isBanned(UUID userId, UUID guildId) {
+        Integer n = jdbc.queryForObject(
+                "select count(*) from guild_bans where guild_id = :g and user_id = :u",
+                Map.of("g", guildId, "u", userId), Integer.class);
+        return n != null && n > 0;
     }
 
     // ---- roles & membership ----------------------------------------------
@@ -157,6 +168,7 @@ public class GuildService {
                 insert into channels (id, guild_id, name, type, position)
                 values (:id, :g, 'Voice', 'voice', 1)
                 """, Map.of("id", Ids.newId(), "g", id));
+        audit.log(id, ownerId, "guild.create", null, name.trim());
         return buildGuild(id);
     }
 
@@ -208,10 +220,16 @@ public class GuildService {
         if (exists == null || exists == 0) {
             throw ApiException.notFound("server not found");
         }
-        jdbc.update("""
+        if (isBanned(userId, guildId)) {
+            throw ApiException.forbidden("you are banned from this server");
+        }
+        int inserted = jdbc.update("""
                 insert into memberships (guild_id, user_id, role) values (:g, :u, 'member')
                 on conflict (guild_id, user_id) do nothing
                 """, Map.of("g", guildId, "u", userId));
+        if (inserted > 0) {
+            audit.log(guildId, userId, "member.join", userId, null);
+        }
         return buildGuildFor(userId, guildId);
     }
 
@@ -232,6 +250,7 @@ public class GuildService {
                 """, new MapSqlParameterSource()
                 .addValue("id", id).addValue("g", guildId).addValue("n", name.trim())
                 .addValue("t", type).addValue("p", nextPos).addValue("ao", adminOnly));
+        audit.log(guildId, userId, "channel.create", null, type + " #" + name.trim());
         return channelById(id);
     }
 
@@ -274,6 +293,10 @@ public class GuildService {
         }
         if (!sets.isEmpty()) {
             jdbc.update("update channels set " + String.join(", ", sets) + " where id = :c", p);
+            ChannelDto c = channelById(channelId);
+            audit.log(guildId, userId, "channel.update", null,
+                    "#" + c.name() + ": " + String.join(", ", sets).replaceAll(" = :\\w+", ""));
+            return c;
         }
         return channelById(channelId);
     }
@@ -288,7 +311,10 @@ public class GuildService {
         requireAdmin(userId, guildId);
         jdbc.update("update channels set admin_only = :ao where id = :c",
                 Map.of("ao", adminOnly, "c", channelId));
-        return channelById(channelId);
+        ChannelDto c = channelById(channelId);
+        audit.log(guildId, userId, "channel.update", null,
+                "#" + c.name() + ": " + (adminOnly ? "admin-only" : "public"));
+        return c;
     }
 
     /** For slow-mode enforcement. */
@@ -314,7 +340,10 @@ public class GuildService {
     public void deleteChannel(UUID userId, UUID channelId) {
         UUID guildId = guildIdOfChannel(channelId);
         requireAdmin(userId, guildId);
+        String name = jdbc.queryForObject("select name from channels where id = :c",
+                Map.of("c", channelId), String.class);
         jdbc.update("delete from channels where id = :c", Map.of("c", channelId));
+        audit.log(guildId, userId, "channel.delete", null, "#" + name);
     }
 
     public GuildDto renameGuild(UUID userId, UUID guildId, String name) {
@@ -324,6 +353,7 @@ public class GuildService {
             throw ApiException.badRequest("server name must be 1–100 characters");
         }
         jdbc.update("update guilds set name = :n where id = :g", Map.of("n", n, "g", guildId));
+        audit.log(guildId, userId, "guild.rename", null, n);
         return buildGuild(guildId);
     }
 
@@ -337,6 +367,7 @@ public class GuildService {
         }
         jdbc.update("delete from memberships where guild_id = :g and user_id = :u",
                 Map.of("g", guildId, "u", userId));
+        audit.log(guildId, userId, "member.leave", userId, null);
     }
 
     /** Delete a whole server (owner only). Channels, memberships and messages cascade. */
@@ -372,10 +403,16 @@ public class GuildService {
             throw ApiException.notFound("no such user");
         }
         UUID targetId = (UUID) found.get(0)[0];
-        jdbc.update("""
+        if (isBanned(targetId, guildId)) {
+            throw ApiException.badRequest("that user is banned from this server (unban them first)");
+        }
+        int inserted = jdbc.update("""
                 insert into memberships (guild_id, user_id, role) values (:g, :u, 'member')
                 on conflict (guild_id, user_id) do nothing
                 """, Map.of("g", guildId, "u", targetId));
+        if (inserted > 0) {
+            audit.log(guildId, userId, "member.add", targetId, null);
+        }
         return new MemberDto(targetId, username.trim().toLowerCase(), (String) found.get(0)[1], "member");
     }
 
@@ -389,6 +426,7 @@ public class GuildService {
         if (n == 0) {
             throw ApiException.notFound("member not found");
         }
+        audit.log(guildId, userId, "member.role", targetUserId, newRole);
     }
 
     public void kick(UUID userId, UUID guildId, UUID targetUserId) {
@@ -400,5 +438,6 @@ public class GuildService {
         }
         jdbc.update("delete from memberships where guild_id = :g and user_id = :u",
                 Map.of("g", guildId, "u", targetUserId));
+        audit.log(guildId, userId, "member.kick", targetUserId, null);
     }
 }

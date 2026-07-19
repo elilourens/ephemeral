@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -173,10 +174,52 @@ public class RealtimeService {
                 "data", Map.of("channelId", channelId, "userId", user.id(), "name", user.displayName())), except);
     }
 
-    /** Voice-channel presence change — sent to ALL clients so the sidebar updates. */
+    /** A DM conversation changed shape (created / member added / kicked / renamed / left). */
+    public void dmUpdated(UUID channelId, java.util.Collection<UUID> memberIds) {
+        sendToUsers(memberIds, Map.of("type", "dm_updated", "data", Map.of("channelId", channelId)));
+    }
+
+    /** Ring: someone started a call in a DM — tell the other participants. */
+    public void dmCallStarted(UUID channelId, AuthUser caller, java.util.Collection<UUID> memberIds) {
+        List<UUID> others = memberIds.stream().filter(m -> !m.equals(caller.id())).toList();
+        sendToUsers(others, Map.of("type", "dm_call", "data", Map.of(
+                "channelId", channelId, "fromId", caller.id(), "fromName", caller.displayName())));
+    }
+
+    /** Admin voice moderation: force-mute/deafen/disconnect a user's client in a call. */
+    public void voiceForce(UUID targetUserId, UUID channelId, Map<String, Object> action) {
+        Map<String, Object> data = new java.util.HashMap<>(action);
+        data.put("channelId", channelId);
+        sendToUsers(List.of(targetUserId), Map.of("type", "voice_force", "data", data));
+    }
+
+    /**
+     * Voice-channel presence change. Guild channels go to ALL clients (the
+     * sidebar shows who's in every call); DM calls are private — participants only.
+     */
     public void voicePresence(UUID channelId, Object participants) {
-        broadcastAll(Map.of("type", "voice_presence",
-                "data", Map.of("channelId", channelId, "participants", participants)));
+        Map<String, Object> envelope = Map.of("type", "voice_presence",
+                "data", Map.of("channelId", channelId, "participants", participants));
+        if (guildOf(channelId) == null) {
+            sendToUsers(guilds.dmMemberIds(channelId), envelope);
+        } else {
+            broadcastAll(envelope);
+        }
+    }
+
+    private void sendToUsers(java.util.Collection<UUID> userIds, Map<String, Object> envelope) {
+        String json;
+        try {
+            json = mapper.writeValueAsString(envelope);
+        } catch (Exception e) {
+            log.warn("failed to serialize realtime event", e);
+            return;
+        }
+        for (UUID u : userIds) {
+            for (WebSocketSession s : userSessions.getOrDefault(u, Set.of())) {
+                send(s, json);
+            }
+        }
     }
 
     /** Online/status change for a user — sent to ALL clients. */

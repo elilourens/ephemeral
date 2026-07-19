@@ -3,6 +3,7 @@ package com.ephemeral.voice;
 import com.ephemeral.auth.AuthUser;
 import com.ephemeral.auth.CurrentUser;
 import com.ephemeral.guild.GuildService;
+import com.ephemeral.realtime.RealtimeService;
 import com.ephemeral.web.ApiException;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,11 +17,14 @@ public class VoiceController {
     private final GuildService guilds;
     private final LiveKitTokenService livekit;
     private final VoicePresenceService presence;
+    private final RealtimeService realtime;
 
-    public VoiceController(GuildService guilds, LiveKitTokenService livekit, VoicePresenceService presence) {
+    public VoiceController(GuildService guilds, LiveKitTokenService livekit,
+                           VoicePresenceService presence, RealtimeService realtime) {
         this.guilds = guilds;
         this.livekit = livekit;
         this.presence = presence;
+        this.realtime = realtime;
     }
 
     /** Issues a LiveKit join token for a voice channel, scoped by the user's role. */
@@ -38,6 +42,10 @@ public class VoiceController {
                 && !presence.contains(channelId, user.id().toString())
                 && presence.count(channelId) >= limit) {
             throw ApiException.badRequest("This voice channel is full (" + limit + " max)");
+        }
+        // Ring: the first person joining a DM call notifies the other participants.
+        if (guildId == null && presence.count(channelId) == 0) {
+            realtime.dmCallStarted(channelId, user, guilds.dmMemberIds(channelId));
         }
         String room = "channel-" + channelId;
         return livekit.mint(user, room, admin);

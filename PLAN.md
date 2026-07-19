@@ -751,3 +751,36 @@ last state (localStorage). Never self-pings.
 
 **39/39 JUnit** (adds vanish-timer override/reset + reply-ping loud/silent/self
 coverage); browser suites retention-check 4/4 and ping toggle sticky-verified.
+
+---
+
+## 24. Group DMs, Discord-style calls, and server moderation
+
+**Group DMs (Discord semantics, verified in 3 real browsers):** 1:1s stay
+deduped by `dm_key`; groups (3–10 people, V12) have an owner who can remove
+members (ownership transfers on leave; last one out deletes the conversation).
+**Adding a person to a 1:1 spawns a NEW group and the 1:1 + its history stay
+private** — asserted in `groupdm-check` (8/8). Members list/rename/leave/kick
+UI; multi-chip New DM modal; unified `others[]` DTO.
+
+**Calls:** a DM channel's LiveKit room is inherently n-party, so 1:1 calls
+become group calls for free; `groupcall-check` (7/7) proves a REAL 3-browser
+group call against livekit-server with a genuine getDisplayMedia screenshare
+received by both peers. New **ring**: the first joiner triggers a `dm_call`
+event → clickable toast + ping on the other members' clients. Privacy fix
+found during this work: `voice_presence` (and its connect snapshot) used to
+broadcast DM-call participants to every client on the instance — DM call
+presence now goes only to the conversation's members.
+
+**Server moderation + audit (V12):** `guild_bans` (ban = kick + cannot rejoin,
+enforced on join AND admin member-add; unban restores), admin voice
+**mute/deafen/disconnect** delivered as `voice_force` WS events the target's
+client honors (documented honest-client trade-off; banning also force-
+disconnects from that guild's voice), member-menu Ban flow, voice-tile admin
+actions, and an **audit log**: every moderation action and server change
+(`member.*`, `voice.*`, `channel.*`, `guild.*`) with actor/target/detail,
+admin-only viewer in the server menu, 30-day retention sweep.
+
+**Verified: 42/42 JUnit** (adds `groupDmLifecycle`, `bansKeepPeopleOut`,
+`auditLogRecordsModerationAndServerChanges`) + browser suites groupdm-check
+8/8 and groupcall-check 7/7 (0 JS errors).

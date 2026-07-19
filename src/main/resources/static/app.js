@@ -266,6 +266,7 @@
     "arrow-down": '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
     copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
+    scroll: '<path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>',
     play: '<polygon points="6 3 20 12 6 21 6 3"/>',
     pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
     settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
@@ -495,6 +496,17 @@
     editMsg: (id, content) => api(`/api/messages/${id}`, { method: "PATCH", body: { content } }),
     msgHistory: (id) => api(`/api/messages/${id}/history`),
     mentions: () => api(`/api/mentions`),
+    createGroupDm: (usernames, name) => api(`/api/dms`, { method: "POST", body: { usernames, name } }),
+    addDmMember: (cid, username) => api(`/api/dms/${cid}/members`, { method: "POST", body: { username } }),
+    kickDmMember: (cid, uid) => api(`/api/dms/${cid}/members/${uid}`, { method: "DELETE" }),
+    leaveDm: (cid) => api(`/api/dms/${cid}/leave`, { method: "POST" }),
+    renameDm: (cid, name) => api(`/api/dms/${cid}`, { method: "PATCH", body: { name } }),
+    ban: (gid, uid, reason) => api(`/api/guilds/${gid}/bans/${uid}`, { method: "POST", body: { reason } }),
+    unban: (gid, uid) => api(`/api/guilds/${gid}/bans/${uid}`, { method: "DELETE" }),
+    bans: (gid) => api(`/api/guilds/${gid}/bans`),
+    auditLog: (gid) => api(`/api/guilds/${gid}/audit-log`),
+    voiceMod: (cid, uid, what, on) => api(`/api/channels/${cid}/voice/${uid}/${what}`,
+      { method: "POST", body: what === "disconnect" ? null : { on } }),
     saveMsg: (id) => api(`/api/messages/${id}/save`, { method: "POST" }),
     unsaveMsg: (id) => api(`/api/messages/${id}/save`, { method: "DELETE" }),
     deleteMsg: (id) => api(`/api/messages/${id}`, { method: "DELETE" }),
@@ -698,6 +710,7 @@
           if (list.length) state.voicePresence[d.channelId] = list;
           else delete state.voicePresence[d.channelId];
           renderChannels();
+          if (state.dmMode) renderDmSidebar(); // live-call badge on DM rows
           if (voice.room && voice.channelId === d.channelId) voice.rebuildRoster();
           break;
         }
@@ -725,6 +738,17 @@
           applyPresence();
           break;
         }
+        case "dm_updated":
+          // a conversation changed shape (created/renamed/member added/kicked/left)
+          handleDmUpdated(d.channelId);
+          break;
+        case "dm_call":
+          onDmCallRing(d);
+          break;
+        case "voice_force":
+          // an admin muted/deafened/disconnected me
+          applyVoiceForce(d);
+          break;
       }
     },
   };
@@ -1796,7 +1820,7 @@
       }
     }
     for (const d of state.dms || []) {
-      items.push({ label: d.other.displayName || d.other.username, kind: "DM", glyph: "message-circle", go: () => selectDm(d) });
+      items.push({ label: dmDisplayName(d), kind: d.group ? "Group DM" : "DM", glyph: d.group ? "users" : "message-circle", go: () => selectDm(d) });
     }
     const input = h("input", { class: "text-input", placeholder: "Where to?" });
     const list = h("div", { class: "qs-list" });
@@ -2605,7 +2629,7 @@
     const el = $("voice-channel-name");
     el.innerHTML = "";
     if (channel.dm) {
-      const av = avatar(channel.name, channel.other && channel.other.id, "sm");
+      const av = avatar(channel.name, channel.others && channel.others[0] && channel.others[0].id, "sm");
       el.append(av, h("span", { class: "ch-name", text: channel.name }),
         h("button", { class: "ch-toggle", "aria-label": "Back to messages",
           onclick: () => { if (state.currentDm) selectDm(state.currentDm); } }, icon("hash", 15), h("span", { text: "Chat" })));
@@ -2701,11 +2725,68 @@
    * membership and discovery differ. A DM presents to the rest of the app as a
    * synthetic channel object of type "dm".
    * ==================================================================== */
+  function dmUserName(u) { return (u && (u.displayName || u.username)) || "Unknown"; }
+  function dmDisplayName(dm) {
+    if (dm.name) return dm.name;
+    const names = (dm.others || []).map(dmUserName);
+    return names.length ? names.join(", ") : "Just you";
+  }
   function dmChannelObj(dm) {
-    return { id: dm.channelId, type: "dm", dm: true,
-      name: dm.other.displayName || dm.other.username, other: dm.other };
+    return { id: dm.channelId, type: "dm", dm: true, group: dm.group,
+      name: dmDisplayName(dm), others: dm.others || [] };
   }
   function dmUnreadCount() { return (state.dms || []).filter((d) => d.unread).length; }
+
+  // A conversation changed shape (or I was kicked): refresh and fix the view.
+  async function handleDmUpdated(channelId) {
+    await loadDms();
+    const dm = (state.dms || []).find((x) => x.channelId === channelId);
+    if (state.currentDm && state.currentDm.channelId === channelId) {
+      if (!dm) {
+        state.currentDm = null;
+        toast("You are no longer in that conversation");
+        if (state.dmMode) { showView("empty"); renderDmSidebar(); }
+      } else {
+        state.currentDm = dm;
+        if (!$("chat-view").classList.contains("hidden")) renderDmHeader(dm);
+      }
+    }
+  }
+
+  // Ring: someone started a call in one of my DMs — ping + a clickable toast.
+  function onDmCallRing(d) {
+    if (voice.room && voice.channelId === d.channelId) return; // already in it
+    playPing();
+    const host = $("toast-host");
+    const el = h("div", { class: "toast toast-call", onclick: async () => {
+      el.remove();
+      await loadDms();
+      const dm = (state.dms || []).find((x) => x.channelId === d.channelId);
+      if (!dm) return;
+      await selectDm(dm);
+      startDmCall(false);
+    } }, icon("phone", 15), h("span", { text: (d.fromName || "Someone") + " started a call — join?" }));
+    host.appendChild(el);
+    setTimeout(() => el.remove(), 15000);
+  }
+
+  // Admin enforcement arriving over WS: honor it and say so.
+  async function applyVoiceForce(d) {
+    if (!voice.room || voice.channelId !== d.channelId) return;
+    if (d.disconnect) {
+      await voice.leave();
+      toast("An admin disconnected you from the call", true);
+      return;
+    }
+    if (d.mute != null && voice.mic === !!d.mute) {
+      await voice.toggleMic();
+      toast(d.mute ? "An admin muted your mic" : "An admin unmuted your mic", d.mute);
+    }
+    if (d.deafen != null) {
+      await voice.setDeafen(!!d.deafen);
+      toast(d.deafen ? "An admin deafened you" : "An admin undeafened you", !!d.deafen);
+    }
+  }
 
   async function loadDms() {
     try { state.dms = await API.listDms(); } catch { state.dms = state.dms || []; }
@@ -2744,15 +2825,83 @@
     }
     for (const dm of dms) {
       const active = state.currentDm && state.currentDm.channelId === dm.channelId;
-      const av = avatar(dm.other.displayName || dm.other.username, dm.other.id, "sm");
-      av.classList.add("has-status"); av.appendChild(statusDot(dm.other.id));
+      let av;
+      if (dm.group) {
+        av = h("span", { class: "avatar sm group-avatar" }, icon("users", 14));
+      } else {
+        const o = dm.others[0] || {};
+        av = avatar(dmUserName(o), o.id, "sm");
+        av.classList.add("has-status"); av.appendChild(statusDot(o.id));
+      }
+      const inCall = (state.voicePresence[dm.channelId] || []).length > 0;
       const row = h("div", {
         class: "channel dm-row" + (active ? " active" : "") + (dm.unread && !active ? " unread" : ""),
         onclick: () => selectDm(dm),
-      }, av, h("span", { class: "name", text: dm.other.displayName || dm.other.username }),
+      }, av, h("span", { class: "name", text: dmDisplayName(dm) }),
+        dm.group ? h("span", { class: "dm-count", text: String((dm.others || []).length + 1) }) : null,
+        inCall ? h("span", { class: "dm-live" }, icon("phone", 12)) : null,
         (dm.unread && !active) ? h("span", { class: "dm-dot" }) : null);
+      row.addEventListener("contextmenu", (e) => { e.preventDefault(); openDmMenu(dm, e.clientX, e.clientY); });
       list.appendChild(row);
     }
+  }
+
+  // Right-click a conversation: read, rename/members/leave for groups.
+  function openDmMenu(dm, x, y) {
+    const mine = state.me ? state.me.id : null;
+    openContextMenu(x, y, [
+      { label: "Mark As Read", icon: icon("check", 16), onClick: async () => {
+        try { await api(`/api/channels/${dm.channelId}/ack`, { method: "POST" }); dm.unread = false; renderDmSidebar(); renderGuildRail(); } catch {}
+      } },
+      { separator: true },
+      dm.group ? { label: "Members…", icon: icon("users", 16), onClick: () => openDmMembersModal(dm) } : null,
+      dm.group ? { label: "Rename Group", icon: icon("pencil", 16), onClick: () => renameDmFlow(dm) } : null,
+      dm.group ? { separator: true } : null,
+      { label: "Copy Channel ID", icon: icon("copy", 16), onClick: () => copyText(dm.channelId) },
+      dm.group ? { separator: true } : null,
+      dm.group ? { label: "Leave Group", icon: icon("log-out", 16), danger: true, onClick: async () => {
+        try { await API.leaveDm(dm.channelId); if (state.currentDm && state.currentDm.channelId === dm.channelId) { state.currentDm = null; showView("empty"); } await loadDms(); } catch (e) { toast(e.message, true); }
+      } } : null,
+    ]);
+  }
+
+  function renameDmFlow(dm) {
+    const input = h("input", { class: "text-input", placeholder: "Group name", value: dm.name || "" });
+    const err = h("div", { class: "modal-error" });
+    const submit = async () => {
+      try { await API.renameDm(dm.channelId, input.value.trim()); closeModal(); } catch (e) { err.textContent = e.message; }
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+    modal({ title: "Rename Group", body: [input, err],
+      footer: [h("button", { class: "btn btn-secondary", text: "Cancel", onclick: closeModal }),
+        h("button", { class: "btn", text: "Save", onclick: submit })] });
+  }
+
+  // Group member list: everyone sees it; the owner can remove people; anyone can add.
+  function openDmMembersModal(dm) {
+    const iAmOwner = state.me && dm.ownerId === state.me.id;
+    const rows = [];
+    const everyone = [{ id: state.me.id, username: state.me.username, displayName: state.me.displayName },
+      ...(dm.others || [])];
+    for (const u of everyone) {
+      const isOwner = u.id === dm.ownerId;
+      rows.push(h("div", { class: "dm-member-row" },
+        avatar(dmUserName(u), u.id, "sm"),
+        h("span", { class: "qs-name", text: dmUserName(u) + (u.id === state.me.id ? " (you)" : "") }),
+        isOwner ? h("span", { class: "role-badge admin", text: "owner" }) : null,
+        (iAmOwner && !isOwner) ? h("button", { class: "btn btn-secondary btn-sm", text: "Remove",
+          onclick: async () => { try { await API.kickDmMember(dm.channelId, u.id); closeModal(); } catch (e) { toast(e.message, true); } } }) : null
+      ));
+    }
+    const addInput = h("input", { class: "text-input", placeholder: "add by username…" });
+    addInput.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      try { await API.addDmMember(dm.channelId, addInput.value.trim()); closeModal(); }
+      catch (err2) { toast(err2.message, true); }
+    });
+    modal({ title: dmDisplayName(dm), subtitle: "Group members (max 10).",
+      body: [...rows, addInput],
+      footer: [h("button", { class: "btn", text: "Close", onclick: closeModal })] });
   }
 
   async function selectDm(dm) {
@@ -2775,11 +2924,47 @@
     updateVanishPill();
     const el = $("chat-channel-name");
     el.innerHTML = "";
-    const av = avatar(dm.other.displayName || dm.other.username, dm.other.id, "sm");
-    av.classList.add("has-status"); av.appendChild(statusDot(dm.other.id));
-    el.append(av, h("span", { class: "ch-name", text: dm.other.displayName || dm.other.username }),
+    let av;
+    if (dm.group) {
+      av = h("span", { class: "avatar sm group-avatar" }, icon("users", 14));
+    } else {
+      const o = dm.others[0] || {};
+      av = avatar(dmUserName(o), o.id, "sm");
+      av.classList.add("has-status"); av.appendChild(statusDot(o.id));
+    }
+    el.append(av, h("span", { class: "ch-name", text: dmDisplayName(dm) }),
+      dm.group ? h("span", { class: "dm-members-count", text: ((dm.others || []).length + 1) + " members",
+        onclick: () => openDmMembersModal(dm) }) : null,
       h("button", { class: "ch-call", "aria-label": "Start voice call", onclick: () => startDmCall(false) }, icon("phone", 17)),
-      h("button", { class: "ch-call", "aria-label": "Start video call", onclick: () => startDmCall(true) }, icon("video", 17)));
+      h("button", { class: "ch-call", "aria-label": "Start video call", onclick: () => startDmCall(true) }, icon("video", 17)),
+      h("button", { class: "ch-call", "aria-label": dm.group ? "Add people" : "Add a third person (makes a group)",
+        onclick: () => openAddToDmModal(dm) }, icon("user-plus", 17)));
+  }
+
+  // Add someone: to a group joins in place; to a 1:1 spawns a NEW group (Discord-style).
+  function openAddToDmModal(dm) {
+    const input = h("input", { class: "text-input", placeholder: "username" });
+    const err = h("div", { class: "modal-error" });
+    const submit = async () => {
+      try {
+        const res = await API.addDmMember(dm.channelId, input.value.trim().replace(/^@/, ""));
+        closeModal();
+        await loadDms();
+        const target = (state.dms || []).find((x) => x.channelId === res.channelId) || res;
+        // if we're mid-call in a 1:1 that just became a group, keep the call; just open the group chat
+        await selectDm(target);
+        if (res.channelId !== dm.channelId) toast("New group created — the 1:1 stays private");
+      } catch (e) { err.textContent = e.message; }
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    modal({
+      title: "Add People",
+      subtitle: dm.group ? "They'll see the group's history from the last 7 days."
+        : "Adding a third person starts a NEW group — this 1:1 and its history stay private.",
+      body: [h("label", {}, "Username", input), err],
+      footer: [h("button", { class: "btn btn-secondary", text: "Cancel", onclick: closeModal }),
+        h("button", { class: "btn", text: "Add", onclick: submit })],
+    });
   }
 
   async function startDmCall(video) {
@@ -2823,27 +3008,50 @@
   }
 
   function openNewDmModal() {
-    const input = h("input", { class: "text-input", placeholder: "username", autocomplete: "off" });
+    // one username = 1:1; several (Enter adds a chip) = a group DM of up to 10
+    const picked = [];
+    const chips = h("div", { class: "dm-chips" });
+    const input = h("input", { class: "text-input", placeholder: "username — Enter to add another", autocomplete: "off" });
+    const nameInput = h("input", { class: "text-input", placeholder: "group name (optional)" });
+    const nameRow = h("label", { class: "hidden" }, "Group name", nameInput);
     const err = h("div", { class: "modal-error" });
+    const renderChips = () => {
+      chips.innerHTML = "";
+      for (const n of picked) {
+        chips.appendChild(h("span", { class: "dm-chip" }, h("span", { text: "@" + n }),
+          h("button", { text: "×", onclick: () => { picked.splice(picked.indexOf(n), 1); renderChips(); } })));
+      }
+      nameRow.classList.toggle("hidden", picked.length < 2);
+    };
+    const addChip = () => {
+      const n = input.value.trim().replace(/^@/, "");
+      if (!n) return;
+      if (!picked.includes(n)) picked.push(n);
+      input.value = "";
+      renderChips();
+    };
     const submit = async () => {
-      const uname = input.value.trim().replace(/^@/, "");
-      if (!uname) { err.textContent = "Enter a username"; return; }
+      addChip();
+      if (!picked.length) { err.textContent = "Enter at least one username"; return; }
       try {
-        const dm = await API.openDmByUsername(uname);
-        state.dms = state.dms || [];
-        if (!state.dms.find((d) => d.channelId === dm.channelId)) state.dms.unshift(dm);
+        const dm = picked.length === 1
+          ? await API.openDmByUsername(picked[0])
+          : await API.createGroupDm(picked, nameInput.value.trim());
+        await loadDms();
         ws.subscribeDms([dm.channelId]);
         closeModal();
-        selectDm(dm);
+        selectDm((state.dms || []).find((d) => d.channelId === dm.channelId) || dm);
       } catch (e) { err.textContent = e.message; }
     };
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); if (input.value.trim()) addChip(); else submit(); }
+    });
     modal({
       title: "New Direct Message",
-      subtitle: "Message someone by their username.",
-      body: [h("label", {}, "Username", input), err],
+      subtitle: "One username for a private 1:1 — add more for a group (max 10).",
+      body: [chips, h("label", {}, "Username", input), nameRow, err],
       footer: [h("button", { class: "btn btn-secondary", text: "Cancel", onclick: closeModal }),
-        h("button", { class: "btn", text: "Message", onclick: submit })],
+        h("button", { class: "btn", text: "Start", onclick: submit })],
     });
   }
 
@@ -3837,9 +4045,34 @@
         onClick: () => changeRole(target, target.role === "admin" ? "member" : "admin") } : null,
       canModerate ? { label: "Kick " + (target.displayName || target.username), icon: icon("log-out", 16),
         danger: true, onClick: () => kickMember(target) } : null,
+      canModerate ? { label: "Ban " + (target.displayName || target.username), icon: icon("shield", 16),
+        danger: true, onClick: () => banMemberFlow(target) } : null,
       { separator: true },
       { label: "Copy User ID", icon: icon("copy", 16), onClick: () => copyText(userId) },
     ]);
+  }
+
+  function banMemberFlow(target) {
+    const g = state.currentGuild;
+    if (!g) return;
+    const reason = h("input", { class: "text-input", placeholder: "reason (optional)" });
+    modal({
+      title: "Ban " + (target.displayName || target.username) + "?",
+      subtitle: "They are removed immediately and cannot rejoin until unbanned (Server menu → Bans).",
+      body: [reason],
+      footer: [
+        h("button", { class: "btn btn-secondary", text: "Cancel", onclick: closeModal }),
+        h("button", { class: "btn danger", text: "Ban", onclick: async () => {
+          try {
+            await API.ban(g.id, target.userId, reason.value.trim());
+            closeModal();
+            toast((target.displayName || target.username) + " was banned");
+            state.members = await API.members(g.id);
+            renderMembers();
+          } catch (e) { toast(e.message, true); }
+        } }),
+      ],
+    });
   }
 
   function openChannelMenu(c, x, y) {
@@ -3874,6 +4107,8 @@
       amAdmin() ? { separator: true } : null,
       amAdmin() ? { label: "Edit Server", icon: icon("settings", 16), onClick: () => renameGuildFlow(g) } : null,
       amAdmin() ? { label: "Create Channel", icon: icon("plus", 16), onClick: () => openCreateChannelModal("text") } : null,
+      amAdmin() ? { label: "Audit Log", icon: icon("scroll", 16), onClick: () => openAuditLogModal(g) } : null,
+      amAdmin() ? { label: "Bans", icon: icon("shield", 16), onClick: () => openBansModal(g) } : null,
       { separator: true },
       { label: "Copy Server ID", icon: icon("copy", 16), onClick: () => copyText(g.id) },
       { separator: true },
@@ -3881,6 +4116,60 @@
         ? { label: "Delete Server", icon: icon("trash", 16), danger: true, onClick: () => deleteGuildFlow(g) }
         : { label: "Leave Server", icon: icon("log-out", 16), danger: true, onClick: () => leaveGuildFlow(g) },
     ]);
+  }
+
+  // ---- admin log + bans (server menu) ----
+  const AUDIT_LABELS = {
+    "guild.create": "created the server", "guild.rename": "renamed the server to",
+    "channel.create": "created channel", "channel.update": "updated channel",
+    "channel.delete": "deleted channel",
+    "member.join": "joined", "member.leave": "left", "member.add": "added",
+    "member.kick": "kicked", "member.ban": "banned", "member.unban": "unbanned",
+    "member.role": "changed role of",
+    "voice.mute": "server-muted", "voice.unmute": "un-server-muted",
+    "voice.deafen": "server-deafened", "voice.undeafen": "un-server-deafened",
+    "voice.disconnect": "disconnected from voice",
+  };
+  async function openAuditLogModal(g) {
+    const list = h("div", { class: "audit-list" }, h("div", { class: "search-hint", text: "Loading…" }));
+    modal({ title: "Audit Log — " + g.name,
+      subtitle: "Every moderation action and server change from the last 30 days.",
+      body: [list],
+      footer: [h("button", { class: "btn", text: "Close", onclick: closeModal })] });
+    let rows;
+    try { rows = await API.auditLog(g.id); } catch (e) { list.textContent = e.message; return; }
+    list.innerHTML = "";
+    if (!rows.length) { list.appendChild(h("div", { class: "search-hint", text: "Nothing logged yet." })); return; }
+    for (const r of rows) {
+      const verb = AUDIT_LABELS[r.action] || r.action;
+      const line = [r.actorName || "someone", " ", verb];
+      if (r.targetName && r.targetId !== r.actorId) line.push(" ", r.targetName);
+      if (r.detail) line.push(" — ", r.detail);
+      list.appendChild(h("div", { class: "audit-row" },
+        h("span", { class: "audit-what", text: line.join("") }),
+        h("span", { class: "audit-when", text: relativeTime(r.at) })));
+    }
+  }
+
+  async function openBansModal(g) {
+    const list = h("div", { class: "audit-list" }, h("div", { class: "search-hint", text: "Loading…" }));
+    modal({ title: "Bans — " + g.name, body: [list],
+      footer: [h("button", { class: "btn", text: "Close", onclick: closeModal })] });
+    const render = async () => {
+      let rows;
+      try { rows = await API.bans(g.id); } catch (e) { list.textContent = e.message; return; }
+      list.innerHTML = "";
+      if (!rows.length) { list.appendChild(h("div", { class: "search-hint", text: "Nobody is banned." })); return; }
+      for (const b of rows) {
+        list.appendChild(h("div", { class: "dm-member-row" },
+          avatar(b.displayName || b.username, b.userId, "sm"),
+          h("span", { class: "qs-name", text: (b.displayName || b.username) + (b.reason ? " — " + b.reason : "") }),
+          h("button", { class: "btn btn-secondary btn-sm", text: "Unban", onclick: async () => {
+            try { await API.unban(g.id, b.userId); render(); } catch (e) { toast(e.message, true); }
+          } })));
+      }
+    };
+    render();
   }
 
   // Right-click on a participant tile while in a voice call.
@@ -3894,6 +4183,19 @@
       !isSelf ? { label: locallyMuted ? "Unmute (for me)" : "Mute (for me)", icon: icon(locallyMuted ? "volume" : "mic-off", 16),
         onClick: () => voice.toggleLocalMute(userId) } : null,
     ];
+    // admin enforcement — guild voice channels only (DM calls have no admins)
+    const vp = (state.voicePresence[voice.channelId] || []).find((p) => p.userId === userId || p.id === userId);
+    if (!isSelf && amAdmin() && state.currentGuild
+        && (state.currentGuild.channels || []).some((c) => c.id === voice.channelId)) {
+      const muted = vp && vp.muted, deafened = vp && vp.deafened;
+      items.push({ separator: true });
+      items.push({ label: muted ? "Server Unmute" : "Server Mute", icon: icon("mic-off", 16),
+        onClick: async () => { try { await API.voiceMod(voice.channelId, userId, "mute", !muted); } catch (e) { toast(e.message, true); } } });
+      items.push({ label: deafened ? "Server Undeafen" : "Server Deafen", icon: icon("headphone-off", 16),
+        onClick: async () => { try { await API.voiceMod(voice.channelId, userId, "deafen", !deafened); } catch (e) { toast(e.message, true); } } });
+      items.push({ label: "Disconnect", icon: icon("phone-off", 16), danger: true,
+        onClick: async () => { try { await API.voiceMod(voice.channelId, userId, "disconnect"); } catch (e) { toast(e.message, true); } } });
+    }
     // per-user volume slider (0–200%), local to you
     if (!isSelf && voice.room) {
       const cur = Math.round((voice.volumeOf(userId)) * 100);

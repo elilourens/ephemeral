@@ -60,7 +60,18 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         session.getAttributes().put("user", user);
         send(session, "{\"type\":\"ready\"}");                 // always the first frame
         realtime.register(session);
-        realtime.sendTo(session, java.util.Map.of("type", "voice_presence_snapshot", "data", presence.snapshot()));
+        // DM calls are private: strip DM channels this user isn't a member of
+        final UUID uid = user.id();
+        java.util.Map<String, Object> snap = new java.util.HashMap<>(presence.snapshot());
+        snap.keySet().removeIf(cid -> {
+            try {
+                UUID c = UUID.fromString(cid);
+                return guilds.guildIdOfChannel(c) == null && !guilds.isDmMember(uid, c);
+            } catch (Exception e) {
+                return true;
+            }
+        });
+        realtime.sendTo(session, java.util.Map.of("type", "voice_presence_snapshot", "data", snap));
         realtime.sendTo(session, java.util.Map.of("type", "presence_snapshot", "data", userPresence.snapshot()));
         userPresence.connected(user.id());                     // broadcast presence last
     }

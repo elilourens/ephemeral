@@ -66,6 +66,8 @@ class EphemeralE2ETest {
     NamedParameterJdbcTemplate jdbc;
     @Autowired
     StorageService storage;
+    @Autowired
+    com.ephemeral.voice.VoicePresenceService voicePresence;
 
     final HttpClient http = HttpClient.newHttpClient();
 
@@ -802,6 +804,129 @@ class EphemeralE2ETest {
         call("DELETE", "/api/messages/" + msg, s.token(), null, 204);
         assertThat(jdbc.queryForObject("select count(*) from message_edits where message_id = :m",
                 Map.of("m", msg), Integer.class)).isZero();
+    }
+
+    @Test
+    void groupDmLifecycle() throws Exception {
+        String bn = uniqueName(), cn = uniqueName();
+        Session a = register(uniqueName());
+        Session b = register(bn);
+        Session c = register(cn);
+        Session outsider = register(uniqueName());
+
+        // 1:1 first
+        UUID oneToOne = UUID.fromString(call("POST", "/api/dms", a.token(),
+                Map.of("username", bn), 200).get("channelId").asText());
+
+        // adding a third person spawns a NEW group; the 1:1 survives untouched
+        JsonNode group = call("POST", "/api/dms/" + oneToOne + "/members", a.token(),
+                Map.of("username", cn), 200);
+        UUID groupId = UUID.fromString(group.get("channelId").asText());
+        assertThat(groupId).isNotEqualTo(oneToOne);
+        assertThat(group.get("group").asBoolean()).isTrue();
+        assertThat(group.get("ownerId").asText()).isEqualTo(a.userId().toString());
+        assertThat(group.get("others")).hasSize(2);
+        assertThat(call("GET", "/api/dms", a.token(), null, 200).findValuesAsText("channelId"))
+                .contains(oneToOne.toString(), groupId.toString());
+
+        // group chat works for all members, never for outsiders
+        call("POST", "/api/channels/" + groupId + "/messages", c.token(), Map.of("content", "hi group"), 200);
+        assertThat(call("GET", "/api/channels/" + groupId + "/messages", b.token(), null, 200)
+                .findValuesAsText("content")).contains("hi group");
+        call("GET", "/api/channels/" + groupId + "/messages", outsider.token(), null, 403);
+        // group calls: members mint voice tokens for the DM channel, outsiders don't
+        call("POST", "/api/channels/" + groupId + "/voice-token", c.token(), null, 200);
+        call("POST", "/api/channels/" + groupId + "/voice-token", outsider.token(), null, 403);
+
+        // any member may rename; the name comes back on the DTO
+        assertThat(call("PATCH", "/api/dms/" + groupId, c.token(), Map.of("name", "the squad"), 200)
+                .get("name").asText()).isEqualTo("the squad");
+
+        // only the owner kicks; kicked members lose access
+        call("DELETE", "/api/dms/" + groupId + "/members/" + b.userId(), c.token(), null, 403);
+        call("DELETE", "/api/dms/" + groupId + "/members/" + b.userId(), a.token(), null, 200);
+        call("GET", "/api/channels/" + groupId + "/messages", b.token(), null, 403);
+
+        // owner leaves -> ownership transfers to a remaining member (c)
+        call("POST", "/api/dms/" + groupId + "/leave", a.token(), null, 200);
+        // c is the last one; leaving deletes the conversation entirely
+        call("POST", "/api/dms/" + groupId + "/leave", c.token(), null, 200);
+        assertThat(jdbc.queryForObject("select count(*) from channels where id = :c",
+                Map.of("c", groupId), Integer.class)).isZero();
+        // 1:1s cannot be left
+        call("POST", "/api/dms/" + oneToOne + "/leave", a.token(), null, 400);
+
+        // direct group creation by usernames, with dedup + size rules
+        JsonNode squad = call("POST", "/api/dms", a.token(),
+                Map.of("usernames", List.of(bn, cn), "name", "trio"), 200);
+        assertThat(squad.get("group").asBoolean()).isTrue();
+        assertThat(squad.get("name").asText()).isEqualTo("trio");
+        call("POST", "/api/dms", a.token(), Map.of("usernames", List.of(bn, bn)), 400);
+    }
+
+    @Test
+    void bansKeepPeopleOut() throws Exception {
+        String bobName = uniqueName();
+        Session admin = register(uniqueName());
+        Session bob = register(bobName);
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Banhammer"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+
+        // members can't ban; admins can — ban removes membership and blocks rejoin
+        call("POST", "/api/guilds/" + gid + "/bans/" + admin.userId(), bob.token(),
+                Map.of("reason", "nope"), 403);
+        call("POST", "/api/guilds/" + gid + "/bans/" + bob.userId(), admin.token(),
+                Map.of("reason", "being rude"), 200);
+        call("GET", "/api/guilds/" + gid, bob.token(), null, 403);
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 403);
+        call("POST", "/api/guilds/" + gid + "/members", admin.token(),
+                Map.of("username", bobName), 400);
+
+        JsonNode bans = call("GET", "/api/guilds/" + gid + "/bans", admin.token(), null, 200);
+        assertThat(bans).hasSize(1);
+        assertThat(bans.get(0).get("reason").asText()).isEqualTo("being rude");
+
+        // unban -> rejoin works
+        call("DELETE", "/api/guilds/" + gid + "/bans/" + bob.userId(), admin.token(), null, 200);
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+    }
+
+    @Test
+    void auditLogRecordsModerationAndServerChanges() throws Exception {
+        Session admin = register(uniqueName());
+        Session bob = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Papertrail"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID voiceChan = channelOfType(guild, "voice");
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+
+        call("POST", "/api/guilds/" + gid + "/channels", admin.token(),
+                Map.of("name", "logged", "type", "text"), 200);
+        call("PATCH", "/api/guilds/" + gid, admin.token(), Map.of("name", "Papertrail 2"), 200);
+        call("PUT", "/api/guilds/" + gid + "/members/" + bob.userId() + "/role", admin.token(),
+                Map.of("role", "admin"), 204);
+
+        // voice moderation (bob "in" the call via the presence service, as the webhook would report)
+        voicePresence.joined("channel-" + voiceChan, bob.userId().toString(), "bob");
+        call("POST", "/api/channels/" + voiceChan + "/voice/" + bob.userId() + "/mute",
+                admin.token(), Map.of("on", true), 200);
+        call("POST", "/api/channels/" + voiceChan + "/voice/" + bob.userId() + "/disconnect",
+                admin.token(), null, 200);
+        // demote bob again, then ban/unban for the log
+        call("PUT", "/api/guilds/" + gid + "/members/" + bob.userId() + "/role", admin.token(),
+                Map.of("role", "member"), 204);
+        call("POST", "/api/guilds/" + gid + "/bans/" + bob.userId(), admin.token(), null, 200);
+        call("DELETE", "/api/guilds/" + gid + "/bans/" + bob.userId(), admin.token(), null, 200);
+
+        JsonNode log = call("GET", "/api/guilds/" + gid + "/audit-log", admin.token(), null, 200);
+        List<String> actions = log.findValuesAsText("action");
+        assertThat(actions).contains("guild.create", "member.join", "channel.create", "guild.rename",
+                "member.role", "voice.mute", "voice.disconnect", "member.ban", "member.unban");
+        // newest first
+        assertThat(actions.get(actions.size() - 1)).isEqualTo("guild.create");
+        // admins only
+        call("GET", "/api/guilds/" + gid + "/audit-log", bob.token(), null, 403);
     }
 
     @Test

@@ -54,6 +54,10 @@ public class RetentionService {
                 "delete from attachments where message_id is null and id < :b", Map.of("b", boundary));
         storage.deleteAll(orphanKeys);
 
+        // the admin audit log is itself ephemeral: 30 days
+        jdbc.update("delete from audit_log where id < :b",
+                Map.of("b", Ids.boundary(Instant.now().minus(java.time.Duration.ofDays(30)))));
+
         if (messages > 0 || orphanUploads > 0) {
             log.info("retention purge: {} messages, {} orphan uploads", messages, orphanUploads);
         }

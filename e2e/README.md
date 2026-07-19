@@ -15,6 +15,8 @@ node e2e/qol-check.mjs    # day dividers, code copy, ArrowUp-edit, Ctrl+K switch
 node e2e/dm-check.mjs      # two browsers: DM by username, live delivery, unread badge
 node e2e/history-check.mjs # edit twice, click (edited), history modal shows versions
 node e2e/retention-check.mjs # admin sets a 1-hour vanish timer; pill + toast reflect it
+node e2e/groupdm-check.mjs  # 3 browsers: 1:1 -> add person -> NEW group, live msgs, owner kick UI, call ring
+node e2e/groupcall-check.mjs # REAL 3-way group call + screenshare (needs livekit-server on :7880)
 ```
 
 Each suite prints `PASS`/`FAIL` per check and `RESULT n/m`; a non-zero exit

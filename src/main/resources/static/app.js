@@ -473,6 +473,8 @@
     joinGuild: (id) => api(`/api/guilds/${id}/join`, { method: "POST" }),
     renameGuild: (id, name) => api(`/api/guilds/${id}`, { method: "PATCH", body: { name } }),
     setGuildIcon: (id, attachmentId) => api(`/api/guilds/${id}/icon`, { method: "PUT", body: { attachmentId } }),
+    addEmoji: (gid, name, attachmentId) => api(`/api/guilds/${gid}/emoji`, { method: "POST", body: { name, attachmentId } }),
+    deleteEmoji: (gid, eid) => api(`/api/guilds/${gid}/emoji/${eid}`, { method: "DELETE" }),
     leaveGuild: (id) => api(`/api/guilds/${id}/leave`, { method: "POST" }),
     deleteGuild: (id) => api(`/api/guilds/${id}`, { method: "DELETE" }),
     createChannel: (gid, name, type, adminOnly) =>
@@ -1881,7 +1883,7 @@
     const scroll = $("message-scroll");
     const chat = state.currentChannel && state.currentChannel.type === "text";
     const behind = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
-    const farAway = behind > Math.max(700, scroll.clientHeight * 1.25);
+    const farAway = behind > Math.max(2100, scroll.clientHeight * 3.75); // 3x: only when really deep in history
     jp.classList.toggle("hidden", !farAway || !chat);
   }
 
@@ -1945,8 +1947,10 @@
       body.appendChild(renderEditBox(m));
     } else {
       if (m.content) {
-        body.appendChild(h("div", { class: "content", html: renderMarkdown(m.content) +
-          (m.editedAt ? '<span class="edited">(edited)</span>' : "") }));
+        const contentEl = h("div", { class: "content", html: renderMarkdown(m.content) +
+          (m.editedAt ? '<span class="edited">(edited)</span>' : "") });
+        applyCustomEmoji(contentEl);
+        body.appendChild(contentEl);
       }
       if (m.attachments && m.attachments.length) {
         body.appendChild(renderAttachments(m.attachments));
@@ -1983,6 +1987,37 @@
   }
 
   // reaction pills below a message body
+  // ---- per-server custom emoji (:name: -> uploaded image) ----
+  function guildEmojiList() { return (state.currentGuild && state.currentGuild.emoji) || []; }
+  function guildEmojiUrl(name) {
+    const e = guildEmojiList().find((x) => x.name === name);
+    return e ? e.url : null;
+  }
+  // swap :name: for <img> in rendered content — text nodes only, never inside code
+  function applyCustomEmoji(root) {
+    if (!root || !guildEmojiList().length) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) =>
+      (n.parentElement && n.parentElement.closest("code, pre")) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+    const targets = [];
+    while (walker.nextNode()) if (/:[a-z0-9_]{2,30}:/.test(walker.currentNode.nodeValue)) targets.push(walker.currentNode);
+    for (const node of targets) {
+      const text = node.nodeValue;
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      text.replace(/:([a-z0-9_]{2,30}):/g, (mm, name, idx) => {
+        const url = guildEmojiUrl(name);
+        if (!url) return mm;
+        frag.appendChild(document.createTextNode(text.slice(last, idx)));
+        frag.appendChild(h("img", { class: "custom-emoji", src: url, alt: mm, "aria-label": mm }));
+        last = idx + mm.length;
+        return mm;
+      });
+      if (!last) continue;
+      frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    }
+  }
+
   function renderReactions(m) {
     const row = h("div", { class: "reactions" });
     for (const r of m.reactions) {
@@ -1991,7 +2026,12 @@
         "aria-label": r.emoji,
         onclick: () => reactWith(m, r.emoji),
       },
-        h("span", { class: "re-emoji", text: r.emoji }),
+        (() => {
+          const cm = /^:([a-z0-9_]{2,30}):$/.exec(r.emoji);
+          const url = cm && guildEmojiUrl(cm[1]);
+          return url ? h("img", { class: "custom-emoji re-emoji", src: url, alt: r.emoji })
+                     : h("span", { class: "re-emoji", text: r.emoji });
+        })(),
         h("span", { class: "re-count", text: String(r.count) })
       ));
     }
@@ -4170,6 +4210,7 @@
       amAdmin() ? { separator: true } : null,
       amAdmin() ? { label: "Edit Server", icon: icon("settings", 16), onClick: () => renameGuildFlow(g) } : null,
       amAdmin() ? { label: "Add People", icon: icon("user-plus", 16), onClick: () => openAddMemberModal(g) } : null,
+      { label: "Emoji", icon: icon("smile", 16), onClick: () => openEmojiManagerModal(g) },
       amAdmin() ? { label: "Create Channel", icon: icon("plus", 16), onClick: () => openCreateChannelModal("text") } : null,
       amAdmin() ? { label: "Audit Log", icon: icon("scroll", 16), onClick: () => openAuditLogModal(g) } : null,
       amAdmin() ? { label: "Bans", icon: icon("shield", 16), onClick: () => openBansModal(g) } : null,
@@ -4180,6 +4221,58 @@
         ? { label: "Delete Server", icon: icon("trash", 16), danger: true, onClick: () => deleteGuildFlow(g) }
         : { label: "Leave Server", icon: icon("log-out", 16), danger: true, onClick: () => leaveGuildFlow(g) },
     ]);
+  }
+
+  // ---- custom emoji manager (server menu) ----
+  function openEmojiManagerModal(g) {
+    const isAdmin = amAdmin();
+    const err = h("div", { class: "modal-error" });
+    const list = h("div", { class: "audit-list" });
+    const render = () => {
+      list.innerHTML = "";
+      const arr = guildEmojiList();
+      if (!arr.length) { list.appendChild(h("div", { class: "search-hint", text: "No custom emoji yet." })); return; }
+      for (const e of arr) {
+        list.appendChild(h("div", { class: "dm-member-row" },
+          h("img", { class: "custom-emoji lg", src: e.url, alt: ":" + e.name + ":" }),
+          h("span", { class: "qs-name", text: ":" + e.name + ":" }),
+          isAdmin ? h("button", { class: "btn btn-secondary btn-sm", text: "Delete", onclick: async () => {
+            try {
+              await API.deleteEmoji(g.id, e.id);
+              state.currentGuild.emoji = guildEmojiList().filter((x) => x.id !== e.id);
+              render();
+            } catch (e2) { toast(e2.message, true); }
+          } }) : null));
+      }
+    };
+    const nameInput = h("input", { class: "text-input", placeholder: "name (a-z, 0-9, _)", maxlength: "30" });
+    const file = h("input", { type: "file", accept: "image/*", class: "hidden" });
+    file.addEventListener("change", async () => {
+      const f = file.files && file.files[0];
+      file.value = "";
+      if (!f) return;
+      if (f.size > 512000) { err.textContent = "Custom emoji are capped at 500 KB"; return; }
+      try {
+        const up = await API.upload(f);
+        const e = await API.addEmoji(g.id, nameInput.value.trim(), up.id);
+        state.currentGuild.emoji = [...guildEmojiList(), e].sort((a, b) => a.name.localeCompare(b.name));
+        nameInput.value = ""; err.textContent = "";
+        render();
+      } catch (e2) { err.textContent = e2.message; }
+    });
+    const uploadRow = isAdmin ? h("div", { class: "icon-edit-row" }, nameInput,
+      h("div", { class: "icon-edit-btns" },
+        h("button", { class: "btn", text: "Upload image…", onclick: () => {
+          if (!nameInput.value.trim()) { err.textContent = "Give it a name first"; return; }
+          file.click();
+        } })), file) : null;
+    modal({
+      title: "Server Emoji",
+      subtitle: "Type :name: anywhere to use them — messages and reactions.",
+      body: [uploadRow, err, list].filter(Boolean),
+      footer: [h("button", { class: "btn", text: "Close", onclick: closeModal })],
+    });
+    render();
   }
 
   // ---- admin log + bans (server menu) ----
@@ -4320,13 +4413,21 @@
     const renderGrid = (filter) => {
       grid.innerHTML = "";
       let list = [];
+      let custom = [];
       if (filter) {
         const f = filter.toLowerCase();
         for (const c of cats) for (const [em, kw] of EMOJI[c]) if (kw.indexOf(f) >= 0 || em === filter) list.push(em);
+        custom = guildEmojiList().filter((ce) => ce.name.indexOf(f) >= 0);
       } else {
         list = EMOJI[activeCat].map((x) => x[0]);
+        if (activeCat === cats[0]) custom = guildEmojiList();
       }
-      if (!list.length) { grid.appendChild(h("div", { class: "emoji-empty", text: "No emoji found" })); return; }
+      for (const ce of custom) {
+        grid.appendChild(h("button", { class: "emoji-cell", "aria-label": ":" + ce.name + ":",
+          onclick: () => { onPick(":" + ce.name + ":"); if (!opts.keepOpen) closePopover(); } },
+          h("img", { class: "custom-emoji", src: ce.url, alt: ":" + ce.name + ":" })));
+      }
+      if (!list.length && !custom.length) { grid.appendChild(h("div", { class: "emoji-empty", text: "No emoji found" })); return; }
       for (const em of list) {
         grid.appendChild(h("button", { class: "emoji-cell", "aria-label": em, text: em,
           onclick: () => { onPick(em); if (!opts.keepOpen) closePopover(); } }));
@@ -4452,7 +4553,8 @@
   }
   function convertEmojiShortcodes(text) {
     const map = emojiCodes();
-    return text.replace(/:([a-z0-9_+-]{2,}):/gi, (m, name) => map[name.toLowerCase()] || m);
+    return text.replace(/:([a-z0-9_+-]{2,}):/gi, (m, name) =>
+      guildEmojiUrl(name.toLowerCase()) ? m : (map[name.toLowerCase()] || m));
   }
   function currentEmojiQuery() {
     const input = $("composer-input");
@@ -4469,6 +4571,10 @@
     if (!q || !state.currentChannel) { closeEmojiAuto(); return; }
     const ql = q.query.toLowerCase();
     const scored = [];
+    for (const ce of guildEmojiList()) {
+      const idx = ce.name.indexOf(ql);
+      if (idx >= 0) scored.push({ e: { em: ":" + ce.name + ":", name: ce.name, url: ce.url }, best: idx === 0 ? 3 : 1.5 });
+    }
     for (const e of emojiFlat()) {
       let best = -1;
       for (const w of e.kw.split(" ")) { const idx = w.indexOf(ql); if (idx === 0) best = Math.max(best, 2); else if (idx > 0) best = Math.max(best, 1); }
@@ -4489,7 +4595,8 @@
       box.appendChild(h("div", { class: "mention-opt" + (i === emojiAuto.active ? " active" : ""),
         onmousedown: (ev) => { ev.preventDefault(); insertEmojiShortcode(e); },
         onmouseenter: () => { emojiAuto.active = i; [...box.children].forEach((c, j) => c.classList.toggle("active", j === i)); } },
-        h("span", { class: "emoji-opt-em", text: e.em }),
+        e.url ? h("img", { class: "custom-emoji emoji-opt-em", src: e.url, alt: e.em })
+              : h("span", { class: "emoji-opt-em", text: e.em }),
         h("span", { class: "mo-name", text: ":" + e.name + ":" })));
     });
     positionMentionBox(box);

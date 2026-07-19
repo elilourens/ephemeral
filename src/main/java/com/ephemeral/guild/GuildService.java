@@ -191,8 +191,62 @@ public class GuildService {
                 "select " + CHANNEL_COLS + " from channels where guild_id = :id" + where + " order by position, name",
                 Map.of("id", guildId), CHANNEL_MAPPER);
         UUID iconId = (UUID) g[3];
+        List<GuildDto.EmojiDto> emoji = jdbc.query(
+                "select id, name, attachment_id from guild_emoji where guild_id = :g order by name",
+                Map.of("g", guildId), (rs, i) -> new GuildDto.EmojiDto(
+                        rs.getObject("id", UUID.class), rs.getString("name"),
+                        "/api/files/" + rs.getObject("attachment_id", UUID.class)));
         return new GuildDto((UUID) g[0], (String) g[1], (UUID) g[2],
-                iconId == null ? null : "/api/files/" + iconId, channels);
+                iconId == null ? null : "/api/files/" + iconId, channels, emoji);
+    }
+
+    private static final java.util.regex.Pattern EMOJI_NAME = java.util.regex.Pattern.compile("[a-z0-9_]{2,30}");
+
+    /** Add a custom emoji (admin): the caller's own fresh image upload, named :name:. */
+    public GuildDto.EmojiDto addEmoji(UUID userId, UUID guildId, String name, UUID attachmentId) {
+        requireAdmin(userId, guildId);
+        String n = name == null ? "" : name.trim().toLowerCase().replaceAll("^:|:$", "");
+        if (!EMOJI_NAME.matcher(n).matches()) {
+            throw ApiException.badRequest("emoji names are 2-30 chars: a-z, 0-9, _");
+        }
+        var rows = jdbc.query("""
+                select owner_id, message_id, content_type, size_bytes from attachments where id = :a
+                """, Map.of("a", attachmentId), (rs, i) -> new Object[]{
+                rs.getObject("owner_id", UUID.class), rs.getObject("message_id", UUID.class),
+                rs.getString("content_type"), rs.getLong("size_bytes")});
+        if (rows.isEmpty() || !userId.equals(rows.get(0)[0]) || rows.get(0)[1] != null) {
+            throw ApiException.badRequest("upload the image first, then name it");
+        }
+        String ct = (String) rows.get(0)[2];
+        if (ct == null || !ct.startsWith("image/")) {
+            throw ApiException.badRequest("custom emoji must be an image");
+        }
+        if ((long) rows.get(0)[3] > 512_000L) {
+            throw ApiException.badRequest("custom emoji are capped at 500 KB");
+        }
+        Integer dup = jdbc.queryForObject(
+                "select count(*) from guild_emoji where guild_id = :g and name = :n",
+                Map.of("g", guildId, "n", n), Integer.class);
+        if (dup != null && dup > 0) {
+            throw ApiException.conflict(":" + n + ": already exists on this server");
+        }
+        UUID id = Ids.newId();
+        jdbc.update("insert into guild_emoji (id, guild_id, name, attachment_id) values (:id, :g, :n, :a)",
+                Map.of("id", id, "g", guildId, "n", n, "a", attachmentId));
+        audit.log(guildId, userId, "emoji.create", null, ":" + n + ":");
+        return new GuildDto.EmojiDto(id, n, "/api/files/" + attachmentId);
+    }
+
+    /** Remove a custom emoji (admin). The image row/blob becomes an orphan for the sweep. */
+    public void deleteEmoji(UUID userId, UUID guildId, UUID emojiId) {
+        requireAdmin(userId, guildId);
+        var rows = jdbc.query("select name from guild_emoji where id = :e and guild_id = :g",
+                Map.of("e", emojiId, "g", guildId), (rs, i) -> rs.getString("name"));
+        if (rows.isEmpty()) {
+            throw ApiException.notFound("emoji not found");
+        }
+        jdbc.update("delete from guild_emoji where id = :e", Map.of("e", emojiId));
+        audit.log(guildId, userId, "emoji.delete", null, ":" + rows.get(0) + ":");
     }
 
     /**

@@ -867,6 +867,52 @@ class EphemeralE2ETest {
     }
 
     @Test
+    void customEmojiLifecycle() throws Exception {
+        Session admin = register(uniqueName());
+        Session member = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Emojihaus"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+
+        UUID img = uploadImage(admin.token(), "blob.png");
+        // members can't add; bad names rejected; text uploads rejected
+        call("POST", "/api/guilds/" + gid + "/emoji", member.token(),
+                Map.of("name", "party", "attachmentId", img), 403);
+        call("POST", "/api/guilds/" + gid + "/emoji", admin.token(),
+                Map.of("name", "Party Time!", "attachmentId", img), 400);
+        UUID txt = uploadFile(admin.token(), "no.txt", "nope");
+        call("POST", "/api/guilds/" + gid + "/emoji", admin.token(),
+                Map.of("name", "nope", "attachmentId", txt), 400);
+
+        JsonNode e = call("POST", "/api/guilds/" + gid + "/emoji", admin.token(),
+                Map.of("name", ":party:", "attachmentId", img), 200);
+        assertThat(e.get("name").asText()).isEqualTo("party");
+        // duplicate name -> conflict
+        UUID img2 = uploadImage(admin.token(), "blob2.png");
+        call("POST", "/api/guilds/" + gid + "/emoji", admin.token(),
+                Map.of("name", "party", "attachmentId", img2), 409);
+        // exposed on the guild DTO for every member
+        JsonNode gv = call("GET", "/api/guilds/" + gid, member.token(), null, 200);
+        assertThat(gv.get("emoji").get(0).get("name").asText()).isEqualTo("party");
+
+        // referenced emoji images survive the orphan purge even when old
+        UUID oldEmoji = Ids.boundary(Instant.now().minus(8, ChronoUnit.DAYS));
+        insertAttachment(oldEmoji, null, admin.userId());
+        jdbc.update("insert into guild_emoji (id, guild_id, name, attachment_id) values (:id, :g, 'ancient', :a)",
+                Map.of("id", Ids.newId(), "g", gid, "a", oldEmoji));
+        retention.purgeExpired();
+        assertThat(jdbc.queryForObject("select count(*) from attachments where id = :a",
+                Map.of("a", oldEmoji), Integer.class)).isEqualTo(1);
+
+        // delete (admin only) removes it from the set
+        UUID eid = UUID.fromString(e.get("id").asText());
+        call("DELETE", "/api/guilds/" + gid + "/emoji/" + eid, member.token(), null, 403);
+        call("DELETE", "/api/guilds/" + gid + "/emoji/" + eid, admin.token(), null, 200);
+        assertThat(call("GET", "/api/guilds/" + gid, admin.token(), null, 200)
+                .get("emoji").findValuesAsText("name")).doesNotContain("party");
+    }
+
+    @Test
     void ghostTokensAreRejectedNot500() throws Exception {
         // a signed JWT whose user no longer exists (deleted account / reset DB)
         // must be a clean 401 — not an FK-violation 500 on the first write

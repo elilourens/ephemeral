@@ -67,9 +67,9 @@
   --z-sticky: 10; --z-dropdown: 100; --z-overlay: 200; --z-modal: 300; --z-toast: 400;
 
   /* fonts */
-  --font-body: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Geist", "Noto Emoji", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: "Instrument Serif", Georgia, serif;
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, "Noto Emoji", monospace;
 
   --shadow-1: 0 2px 8px rgba(0,0,0,.30);
   --shadow-2: 0 10px 34px -6px rgba(0,0,0,.50);
@@ -1901,3 +1901,14 @@ button:active, .btn:active { transform: scale(.94); }
 #guild-name .gn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #guild-name .gn-caret { display: inline-flex; flex: none; color: var(--text-faint); transition: transform .15s, color .15s; }
 #guild-name.clickable:hover .gn-caret { color: var(--text); transform: translateY(1px); }
+
+/* settings: hairline dividers between rows for scanability */
+.set-tabpanel > * + * { border-top: 1px solid rgba(255, 255, 255, .12); padding-top: 16px; }
+.set-tabpanel > .set-note + *, .set-tabpanel > * + .set-note { border-top: none; padding-top: 0; }
+
+/* custom emoji sizing: inline with text, larger in pickers/manager */
+.custom-emoji { height: 20px; width: auto; max-width: 44px; display: inline-block; vertical-align: -4px; object-fit: contain; }
+.reaction .custom-emoji { height: 16px; vertical-align: -3px; }
+.emoji-cell .custom-emoji { height: 24px; max-width: 30px; vertical-align: middle; }
+.custom-emoji.lg { height: 30px; max-width: 60px; }
+.emoji-opt-em.custom-emoji { width: 24px; height: 20px; }

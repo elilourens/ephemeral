@@ -74,6 +74,20 @@ public class GuildController {
         return guilds.renameGuild(user.id(), id, req.name());
     }
 
+    public record EmojiRequest(String name, UUID attachmentId) {}
+
+    /** Add a custom :emoji: to this server (admin, own image upload). */
+    @PostMapping("/api/guilds/{id}/emoji")
+    public GuildDto.EmojiDto addEmoji(@CurrentUser AuthUser user, @PathVariable UUID id,
+                                      @RequestBody EmojiRequest req) {
+        return guilds.addEmoji(user.id(), id, req.name(), req.attachmentId());
+    }
+
+    @DeleteMapping("/api/guilds/{id}/emoji/{emojiId}")
+    public void deleteEmoji(@CurrentUser AuthUser user, @PathVariable UUID id, @PathVariable UUID emojiId) {
+        guilds.deleteEmoji(user.id(), id, emojiId);
+    }
+
     public record IconRequest(UUID attachmentId) {}
 
     /** Set (admin) or clear (null attachmentId) the server's custom icon. */

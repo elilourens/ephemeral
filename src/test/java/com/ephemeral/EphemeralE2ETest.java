@@ -776,6 +776,49 @@ class EphemeralE2ETest {
         return new WsConn(ws, q);
     }
 
+    @Test
+    void everythingIsEncryptedAtRest() throws Exception {
+        Session s = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", s.token(), Map.of("name", "Vault"), 200);
+        UUID chan = channelOfType(guild, "text");
+
+        // message content: ciphertext in the DB, plaintext over the API
+        String secret = "the secret lasagna recipe uses cardamom";
+        UUID msg = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
+                s.token(), Map.of("content", secret), 200).get("id").asText());
+        String raw = jdbc.queryForObject("select content from messages where id = :m",
+                Map.of("m", msg), String.class);
+        assertThat(raw).startsWith("enc:v1:").doesNotContain("lasagna");
+        assertThat(call("GET", "/api/channels/" + chan + "/messages", s.token(), null, 200)
+                .get(0).get("content").asText()).isEqualTo(secret);
+
+        // search still works — the tsvector is computed from plaintext at write time
+        JsonNode hits = call("GET", "/api/search?q=cardamom", s.token(), null, 200);
+        assertThat(hits).hasSize(1);
+        assertThat(hits.get(0).get("content").asText()).isEqualTo(secret);
+        // ...and has:link uses the flag, not a regex over ciphertext
+        call("POST", "/api/channels/" + chan + "/messages",
+                s.token(), Map.of("content", "see https://example.com/spice"), 200);
+        assertThat(call("GET", "/api/search?has=link", s.token(), null, 200)).hasSize(1);
+
+        // uploaded blobs: encrypted on disk, decrypted when served
+        String fileBody = "attachment plaintext that must not touch disk";
+        UUID att = uploadFile(s.token(), "vault.txt", fileBody);
+        byte[] onDisk = java.nio.file.Files.readAllBytes(storage.root().resolve(att.toString()));
+        assertThat(new String(onDisk, StandardCharsets.UTF_8)).startsWith("EPHC").doesNotContain("plaintext");
+        HttpResponse<String> served = http.send(HttpRequest.newBuilder(URI.create(url("/api/files/" + att)))
+                .GET().build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(served.statusCode()).isEqualTo(200);
+        assertThat(served.body()).isEqualTo(fileBody);
+        assertThat(served.headers().firstValueAsLong("Content-Length").orElse(-1))
+                .isEqualTo(fileBody.getBytes(StandardCharsets.UTF_8).length);
+
+        // a legacy plaintext row (pre-encryption) still reads back unchanged
+        insertMessage(Ids.newId(), chan, s.userId(), "legacy plaintext row", false);
+        assertThat(call("GET", "/api/channels/" + chan + "/messages", s.token(), null, 200)
+                .findValuesAsText("content")).contains("legacy plaintext row");
+    }
+
     private UUID uploadFile(String token, String filename, String content) throws Exception {
         String boundary = "----b" + System.nanoTime();
         String crlf = "\r\n";

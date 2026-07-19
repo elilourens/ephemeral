@@ -1,5 +1,6 @@
 package com.ephemeral.message;
 
+import com.ephemeral.crypto.CryptoService;
 import com.ephemeral.dto.AttachmentDto;
 import com.ephemeral.dto.MessageDto;
 import com.ephemeral.dto.ReactionDto;
@@ -36,15 +37,18 @@ public class MessageService {
     private final GuildService guilds;
     private final StorageService storage;
     private final RealtimeService realtime;
+    private final CryptoService crypto;
 
     private static final Pattern MENTION = Pattern.compile("<@([0-9a-fA-F-]{36})>");
+    private static final Pattern LINK = Pattern.compile("(?i)https?://");
 
     public MessageService(NamedParameterJdbcTemplate jdbc, GuildService guilds,
-                          StorageService storage, RealtimeService realtime) {
+                          StorageService storage, RealtimeService realtime, CryptoService crypto) {
         this.jdbc = jdbc;
         this.guilds = guilds;
         this.storage = storage;
         this.realtime = realtime;
+        this.crypto = crypto;
     }
 
     private record Row(UUID id, UUID channelId, UUID authorId, String authorName, String content,
@@ -113,12 +117,15 @@ public class MessageService {
             }
         }
         UUID id = Ids.newId();
+        // content is encrypted at rest; the search vector + has:link flag are
+        // computed from the plaintext bind param and never store readable text
         jdbc.update("""
-                insert into messages (id, channel_id, author_id, content, saved, reply_to_id)
-                values (:id, :c, :a, :content, false, :r)
+                insert into messages (id, channel_id, author_id, content, saved, reply_to_id, content_tsv, has_link)
+                values (:id, :c, :a, :content, false, :r, to_tsvector('english', :plain), :link)
                 """, new MapSqlParameterSource()
                 .addValue("id", id).addValue("c", channelId).addValue("a", userId)
-                .addValue("content", body).addValue("r", validReply));
+                .addValue("content", crypto.encrypt(body)).addValue("r", validReply)
+                .addValue("plain", body).addValue("link", LINK.matcher(body).find()));
         if (hasAttachments) {
             jdbc.update("""
                     update attachments set message_id = :m
@@ -173,8 +180,12 @@ public class MessageService {
         if (body.isEmpty()) {
             throw ApiException.badRequest("message is empty");
         }
-        jdbc.update("update messages set content = :c, edited_at = now() where id = :m",
-                Map.of("c", body, "m", messageId));
+        jdbc.update("""
+                update messages set content = :c, edited_at = now(),
+                       content_tsv = to_tsvector('english', :plain), has_link = :link
+                where id = :m
+                """, Map.of("c", crypto.encrypt(body), "plain", body,
+                "link", LINK.matcher(body).find(), "m", messageId));
         MessageDto dto = getMessage(userId, messageId);
         realtime.messageUpdated(dto);
         return dto;
@@ -325,7 +336,7 @@ public class MessageService {
                     where m.id in (:ids)
                     """, Map.of("ids", replyIds), (rs, i) -> {
                 UUID rid = rs.getObject("id", UUID.class);
-                String c = rs.getString("content");
+                String c = crypto.decrypt(rs.getString("content"));
                 String snippet = c == null ? "" : (c.length() > 140 ? c.substring(0, 140) + "…" : c);
                 replies.put(rid, new ReplyRef(rid, rs.getObject("auid", UUID.class), rs.getString("an"), snippet));
                 return null;
@@ -353,7 +364,7 @@ public class MessageService {
 
         List<MessageDto> out = new ArrayList<>(rows.size());
         for (Row r : rows) {
-            out.add(new MessageDto(r.id(), r.channelId(), r.authorId(), r.authorName(), r.content(),
+            out.add(new MessageDto(r.id(), r.channelId(), r.authorId(), r.authorName(), crypto.decrypt(r.content()),
                     r.saved(), r.pinned(), Ids.timestampOf(r.id()), r.editedAt(),
                     byMessage.getOrDefault(r.id(), List.of()),
                     r.replyToId() != null ? replies.get(r.replyToId()) : null,

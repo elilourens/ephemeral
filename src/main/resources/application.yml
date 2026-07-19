@@ -25,6 +25,7 @@ ephemeral:
   retention: ${RETENTION:7d}
   cleanup-interval: ${CLEANUP_INTERVAL:15m}
   jwt-secret: ${JWT_SECRET:dev-only-insecure-secret-change-me-please-0123456789}
+  encryption-key: ${ENCRYPTION_KEY:}
   jwt-ttl: 7d
   storage-dir: ${STORAGE_DIR:./data/uploads}
   livekit:

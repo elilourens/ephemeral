@@ -57,19 +57,20 @@ public class FileController {
 
     @GetMapping("/api/files/{id}")
     public ResponseEntity<Resource> download(@PathVariable UUID id) {
-        var rows = jdbc.query("select filename, content_type, storage_key from attachments where id = :id",
+        record Meta(String filename, String contentType, String key, long size) {}
+        var rows = jdbc.query("select filename, content_type, storage_key, size_bytes from attachments where id = :id",
                 Map.of("id", id),
-                (rs, i) -> new String[]{rs.getString("filename"), rs.getString("content_type"),
-                        rs.getString("storage_key")});
+                (rs, i) -> new Meta(rs.getString("filename"), rs.getString("content_type"),
+                        rs.getString("storage_key"), rs.getLong("size_bytes")));
         if (rows.isEmpty()) {
             throw ApiException.notFound("file not found");
         }
-        String[] r = rows.get(0);
-        Resource res = storage.loadResource(r[2]);
-        MediaType type = r[1] != null ? MediaType.parseMediaType(r[1]) : MediaType.APPLICATION_OCTET_STREAM;
+        Meta m = rows.get(0);
+        Resource res = storage.loadResource(m.key(), m.size());
+        MediaType type = m.contentType() != null ? MediaType.parseMediaType(m.contentType()) : MediaType.APPLICATION_OCTET_STREAM;
         return ResponseEntity.ok()
                 .contentType(type)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + r[0] + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + m.filename() + "\"")
                 .body(res);
     }
 }

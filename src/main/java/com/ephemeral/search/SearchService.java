@@ -1,5 +1,6 @@
 package com.ephemeral.search;
 
+import com.ephemeral.crypto.CryptoService;
 import com.ephemeral.dto.SearchHitDto;
 import com.ephemeral.util.Ids;
 import com.ephemeral.web.ApiException;
@@ -11,18 +12,21 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Full-text message search over the {@code content_tsv} generated column.
- * Results are scoped to servers the viewer belongs to and never leak admin-only
- * channels to non-admins. Supports {@code from:} (author), {@code in:} (channel)
- * and {@code has:} (link/image/file) filters, and recent-vs-relevant sort.
+ * Full-text message search over {@code content_tsv} (computed from plaintext at
+ * write time — message bodies themselves are encrypted at rest). Results are
+ * scoped to servers the viewer belongs to and never leak admin-only channels to
+ * non-admins. Supports {@code from:} (author), {@code in:} (channel) and
+ * {@code has:} (link/image/file) filters, and recent-vs-relevant sort.
  */
 @Service
 public class SearchService {
 
     private final NamedParameterJdbcTemplate jdbc;
+    private final CryptoService crypto;
 
-    public SearchService(NamedParameterJdbcTemplate jdbc) {
+    public SearchService(NamedParameterJdbcTemplate jdbc, CryptoService crypto) {
         this.jdbc = jdbc;
+        this.crypto = crypto;
     }
 
     public List<SearchHitDto> search(UUID viewerId, String q, UUID guildId, UUID channelId,
@@ -66,7 +70,7 @@ public class SearchService {
         }
         if (has != null) {
             switch (has) {
-                case "link" -> where.append(" and m.content ~* 'https?://'");
+                case "link" -> where.append(" and m.has_link");
                 case "image" -> where.append(" and exists (select 1 from attachments a "
                         + "where a.message_id = m.id and a.content_type like 'image/%')");
                 case "file" -> where.append(" and exists (select 1 from attachments a where a.message_id = m.id)");
@@ -93,7 +97,7 @@ public class SearchService {
                     rs.getObject("guild_id", UUID.class),
                     rs.getObject("author_id", UUID.class),
                     dn != null && !dn.isBlank() ? dn : un,
-                    rs.getString("content"),
+                    crypto.decrypt(rs.getString("content")),
                     Ids.timestampOf(id));
         });
     }

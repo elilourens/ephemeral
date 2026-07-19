@@ -22,6 +22,12 @@ public class AppProperties {
     /** HMAC secret for signing app auth JWTs. Must be >= 32 bytes. */
     private String jwtSecret = "dev-only-insecure-secret-change-me-please-0123456789";
 
+    /**
+     * At-rest encryption key: base64 of exactly 32 bytes (openssl rand -base64 32).
+     * Blank = derived from the JWT secret (fine for dev; set explicitly in prod).
+     */
+    private String encryptionKey = "";
+
     /** How long an issued app auth token is valid. */
     private Duration jwtTtl = Duration.ofDays(7);
 
@@ -66,6 +72,8 @@ public class AppProperties {
     public void setOrphanGrace(Duration orphanGrace) { this.orphanGrace = orphanGrace; }
     public String getJwtSecret() { return jwtSecret; }
     public void setJwtSecret(String jwtSecret) { this.jwtSecret = jwtSecret; }
+    public String getEncryptionKey() { return encryptionKey; }
+    public void setEncryptionKey(String encryptionKey) { this.encryptionKey = encryptionKey; }
     public Duration getJwtTtl() { return jwtTtl; }
     public void setJwtTtl(Duration jwtTtl) { this.jwtTtl = jwtTtl; }
     public String getStorageDir() { return storageDir; }

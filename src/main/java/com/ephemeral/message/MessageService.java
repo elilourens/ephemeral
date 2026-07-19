@@ -1,5 +1,6 @@
 package com.ephemeral.message;
 
+import com.ephemeral.config.AppProperties;
 import com.ephemeral.crypto.CryptoService;
 import com.ephemeral.dto.AttachmentDto;
 import com.ephemeral.dto.MessageDto;
@@ -38,17 +39,20 @@ public class MessageService {
     private final StorageService storage;
     private final RealtimeService realtime;
     private final CryptoService crypto;
+    private final boolean searchIndex;
 
     private static final Pattern MENTION = Pattern.compile("<@([0-9a-fA-F-]{36})>");
     private static final Pattern LINK = Pattern.compile("(?i)https?://");
 
     public MessageService(NamedParameterJdbcTemplate jdbc, GuildService guilds,
-                          StorageService storage, RealtimeService realtime, CryptoService crypto) {
+                          StorageService storage, RealtimeService realtime, CryptoService crypto,
+                          AppProperties props) {
         this.jdbc = jdbc;
         this.guilds = guilds;
         this.storage = storage;
         this.realtime = realtime;
         this.crypto = crypto;
+        this.searchIndex = props.isSearchIndex();
     }
 
     private record Row(UUID id, UUID channelId, UUID authorId, String authorName, String content,
@@ -125,7 +129,7 @@ public class MessageService {
                 """, new MapSqlParameterSource()
                 .addValue("id", id).addValue("c", channelId).addValue("a", userId)
                 .addValue("content", crypto.encrypt(body)).addValue("r", validReply)
-                .addValue("plain", body).addValue("link", LINK.matcher(body).find()));
+                .addValue("plain", searchIndex ? body : null).addValue("link", LINK.matcher(body).find()));
         if (hasAttachments) {
             jdbc.update("""
                     update attachments set message_id = :m
@@ -184,8 +188,9 @@ public class MessageService {
                 update messages set content = :c, edited_at = now(),
                        content_tsv = to_tsvector('english', :plain), has_link = :link
                 where id = :m
-                """, Map.of("c", crypto.encrypt(body), "plain", body,
-                "link", LINK.matcher(body).find(), "m", messageId));
+                """, new MapSqlParameterSource()
+                .addValue("c", crypto.encrypt(body)).addValue("plain", searchIndex ? body : null)
+                .addValue("link", LINK.matcher(body).find()).addValue("m", messageId));
         MessageDto dto = getMessage(userId, messageId);
         realtime.messageUpdated(dto);
         return dto;

@@ -1,73 +1,75 @@
 # ephemeral
 
-A self-hostable **Discord clone with disappearing messages**. Every message is
-physically deleted **7 days** after it's posted (a sliding window) unless a user
-**saves** it. Text channels, voice/video/screen share, file uploads, and two
-roles (admin/member). Runs from a single `docker compose up`.
+A self-hostable **Discord-style chat where everything disappears**. Every
+message is physically deleted **7 days** after it's posted (a sliding window);
+authors can **save** their own messages to keep them. Text channels, DMs,
+voice/video/screen share, file uploads, reactions/replies/pins/search, two
+roles (admin/member). Message text and files are **encrypted at rest**. Runs
+from a single `docker compose up`.
 
-See [PLAN.md](PLAN.md) for the full design and the research behind it.
+- [DEPLOY.md](DEPLOY.md) — hosting it for your friends (Tailscale / VPS + TLS / LAN)
+- [PLAN.md](PLAN.md) — full design, research, and the verification log
+- [docs/UI.md](docs/UI.md) — the liquid-glass UI design notes
 
 ## Stack
 
-- **Backend** — Java 21 + Spring Boot (REST + WebSocket + a scheduled retention job)
-- **Database** — PostgreSQL (+ pgvector available for future semantic search over saved messages)
-- **Voice/video/screen share** — [LiveKit](https://livekit.io) (self-hosted SFU); the app only mints access tokens
-- **Frontend** — plain HTML/CSS/JS, no build step
-- **IDs** — UUIDv7 message ids: the sort key, pagination cursor, and retention boundary in one column
+| | |
+|---|---|
+| Backend | Java 21 + Spring Boot — REST + WebSocket + scheduled retention purge |
+| Database | PostgreSQL 16 (pgvector image; plain SQL via JDBC, Flyway migrations) |
+| Voice/video | [LiveKit](https://livekit.io) self-hosted SFU; the app only mints join tokens |
+| Frontend | plain HTML/CSS/JS, no build step, LiveKit SDK vendored |
+| Privacy | UUIDv7 ids drive retention; AES-256-GCM at rest; TLS/WireGuard in transit |
 
-## Run it (production-style, containers)
-
-```bash
-docker compose up --build
-# open http://localhost:8080
-```
-
-Three services come up: `app`, `postgres`, `livekit`. Register a user, create a
-server, and start chatting. Messages older than the retention window vanish on
-the next purge; click the ⭐ to keep one forever.
-
-To use it from other devices, set `LIVEKIT_URL` to an address the browser can
-reach and enable `use_external_ip: true` in `livekit.yaml`:
+## Quick start
 
 ```bash
-LIVEKIT_URL=ws://<your-host-ip>:7880 docker compose up --build
+cp .env.example .env          # then set JWT_SECRET + ENCRYPTION_KEY (openssl rand -base64 32)
+docker compose up --build     # open http://localhost:8080
 ```
 
-## Run it (local dev, no Docker)
-
-Needs a JDK 21 only — Postgres is provided by an **embedded** instance under the
-`dev` profile (no install, no Docker):
+Local dev without Docker (embedded Postgres, JDK 21 only):
 
 ```bash
 mvn spring-boot:run -Dspring-boot.run.profiles=dev
-# open http://localhost:8080
 ```
 
-## Tests
-
-Full end-to-end suite over real HTTP against an embedded Postgres (auth, roles,
-messaging, pagination, files, retention purge, live WebSocket, LiveKit tokens):
+Tests — full e2e suite over real HTTP (auth, roles, messaging, DMs, files,
+retention, encryption at rest, WebSocket, LiveKit tokens):
 
 ```bash
 mvn test
 ```
 
+## How the ephemeral engine works
+
+Message ids are UUIDv7, so creation time is encoded in the id. A scheduled job
+deletes by primary-key range — `DELETE FROM messages WHERE id < boundary AND
+saved = false` — index-only and cheap, cascading to attachments and their
+on-disk blobs (with an orphan-blob reconciliation sweep as backstop). Saving
+sets `saved = true` and only the **author** can save their own message — nobody
+else can exempt your words from deletion. Deletion is physical, not a soft hide.
+
+## What's encrypted
+
+Message text and uploaded files are AES-256-GCM encrypted before they touch the
+database/disk (`ENCRYPTION_KEY`); the search index keeps only word stems
+(`SEARCH_INDEX=false` for none). Transit is TLS (Caddy profile) or your
+tailnet's WireGuard; WebRTC media is SRTP-encrypted by design. This is not
+E2EE — the host can read messages — see [DEPLOY.md](DEPLOY.md) for the honest
+threat model.
+
 ## Configuration (env vars)
 
 | Var | Default | Meaning |
 |---|---|---|
+| `JWT_SECRET` | dev value | auth-token signing secret, ≥32 bytes (**set in prod**) |
+| `ENCRYPTION_KEY` | derived from `JWT_SECRET` | at-rest key, base64 32 bytes (**set in prod**) |
 | `DB_URL` / `DB_USER` / `DB_PASSWORD` | local Postgres | JDBC connection |
-| `RETENTION` | `7d` | message lifetime (e.g. `24h`, `72h`, `7d`) |
-| `CLEANUP_INTERVAL` | `15m` | how often the purge job runs |
-| `JWT_SECRET` | dev secret | HMAC secret for app auth tokens (**set in prod**, ≥32 bytes) |
+| `RETENTION` / `CLEANUP_INTERVAL` | `7d` / `15m` | message lifetime / purge cadence |
 | `LIVEKIT_URL` | `ws://localhost:7880` | LiveKit URL the **browser** connects to |
-| `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | dev values | must match `livekit.yaml` |
-| `STORAGE_DIR` | `./data/uploads` | where uploaded files live |
-
-## How the ephemeral engine works
-
-Message ids are UUIDv7, so their creation time is encoded in the id. A scheduled
-job deletes by primary-key range — `DELETE FROM messages WHERE id < <boundary> AND
-saved = false` — which is index-only and cheap, and cascades to attachments (whose
-blobs are unlinked too). Saving a message sets `saved = true`, so it falls out of
-the purge and lives forever. Deletion is physical, not a soft hide.
+| `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | dev values | app ↔ LiveKit shared secret |
+| `SEARCH_INDEX` | `true` | `false` = keep no search index at all |
+| `STORAGE_DIR` | `./data/uploads` | where (encrypted) uploads live |
+| `TENOR_KEY` | empty | enables the GIF picker |
+| `DOMAIN` | — | tls profile: Caddy fetches certs for this domain |

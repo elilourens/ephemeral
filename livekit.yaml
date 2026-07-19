@@ -1,5 +1,6 @@
-# LiveKit server config for the compose stack.
-# The api key/secret MUST match the app's LIVEKIT_API_KEY / LIVEKIT_API_SECRET.
+# LiveKit config for BARE-METAL dev runs only (livekit-server --config livekit.yaml).
+# The docker-compose stack ignores this file: it passes LIVEKIT_CONFIG via env
+# so keys live in .env. Keep the dev keys here in sync with application.yml.
 port: 7880
 rtc:
   tcp_port: 7881

@@ -28,6 +28,13 @@ public class AppProperties {
      */
     private String encryptionKey = "";
 
+    /**
+     * Maintain the full-text search index? It stores word STEMS of message
+     * plaintext (bodies themselves are encrypted); false = maximum privacy,
+     * text search returns nothing.
+     */
+    private boolean searchIndex = true;
+
     /** How long an issued app auth token is valid. */
     private Duration jwtTtl = Duration.ofDays(7);
 
@@ -74,6 +81,8 @@ public class AppProperties {
     public void setJwtSecret(String jwtSecret) { this.jwtSecret = jwtSecret; }
     public String getEncryptionKey() { return encryptionKey; }
     public void setEncryptionKey(String encryptionKey) { this.encryptionKey = encryptionKey; }
+    public boolean isSearchIndex() { return searchIndex; }
+    public void setSearchIndex(boolean searchIndex) { this.searchIndex = searchIndex; }
     public Duration getJwtTtl() { return jwtTtl; }
     public void setJwtTtl(Duration jwtTtl) { this.jwtTtl = jwtTtl; }
     public String getStorageDir() { return storageDir; }

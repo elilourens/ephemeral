@@ -1,0 +1,12 @@
+# One domain fronts everything: the app (HTTP + WebSocket) and LiveKit
+# signaling (/rtc). Caddy fetches + renews certificates automatically.
+# WebRTC media flows directly over SRTP (already encrypted) on the UDP range.
+{$DOMAIN} {
+	@rtc path /rtc*
+	handle @rtc {
+		reverse_proxy livekit:7880
+	}
+	handle {
+		reverse_proxy app:8080
+	}
+}

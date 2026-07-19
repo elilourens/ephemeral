@@ -1,17 +1,20 @@
 # ephemeral — full self-hosted stack: app + postgres(+pgvector) + livekit.
-# Usage:  docker compose up --build   then open http://localhost:8080
 #
-# For access beyond localhost (LAN/internet), set LIVEKIT_URL to a host the
-# browser can reach (e.g. ws://192.168.1.10:7880) and flip use_external_ip: true
-# in livekit.yaml so WebRTC media can traverse NAT.
+#   cp .env.example .env   # fill in JWT_SECRET + ENCRYPTION_KEY (openssl rand -base64 32)
+#   docker compose up --build            # open http://localhost:8080
+#
+# TLS (public internet): point a domain at this box, set DOMAIN + LIVEKIT_URL=wss://<domain>
+# in .env, then:  docker compose --profile tls up --build
+# On a private tailnet/LAN no TLS profile is needed — see DEPLOY.md.
 
 services:
   postgres:
     image: pgvector/pgvector:pg16      # plain postgres + the pgvector extension available
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ephemeral
       POSTGRES_USER: ephemeral
-      POSTGRES_PASSWORD: ephemeral
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ephemeral}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -22,34 +25,79 @@ services:
 
   livekit:
     image: livekit/livekit-server:latest
-    command: ["--config", "/etc/livekit/livekit.yaml"]
-    volumes:
-      - ./livekit.yaml:/etc/livekit/livekit.yaml:ro
+    restart: unless-stopped
     ports:
       - "7880:7880"                    # signaling (WebSocket)
       - "7881:7881"                    # TCP media fallback
       - "50000-50100:50000-50100/udp"  # WebRTC media (audio/video/screenshare)
+    environment:
+      # Full config via env so keys live in .env, not in a tracked file.
+      LIVEKIT_CONFIG: |
+        port: 7880
+        rtc:
+          tcp_port: 7881
+          port_range_start: 50000
+          port_range_end: 50100
+          use_external_ip: ${LIVEKIT_EXTERNAL_IP:-false}
+        keys:
+          ${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-livekit-dev-secret-please-change-me-0123456789}
+        webhook:
+          api_key: ${LIVEKIT_API_KEY:-devkey}
+          urls:
+            - http://app:8080/api/livekit/webhook
 
   app:
     build: .
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/ephemeral
       DB_USER: ephemeral
-      DB_PASSWORD: ephemeral
+      DB_PASSWORD: ${DB_PASSWORD:-ephemeral}
       JWT_SECRET: ${JWT_SECRET:-change-me-in-prod-please-a-long-random-32B+-secret}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       RETENTION: ${RETENTION:-7d}
+      CLEANUP_INTERVAL: ${CLEANUP_INTERVAL:-15m}
       LIVEKIT_URL: ${LIVEKIT_URL:-ws://localhost:7880}
-      LIVEKIT_API_KEY: devkey
-      LIVEKIT_API_SECRET: livekit-dev-secret-please-change-me-0123456789
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-livekit-dev-secret-please-change-me-0123456789}
+      TENOR_KEY: ${TENOR_KEY:-}
+      SEARCH_INDEX: ${SEARCH_INDEX:-true}
       STORAGE_DIR: /data/uploads
     ports:
       - "8080:8080"
     volumes:
       - uploads:/data/uploads
+    healthcheck:
+      # the JRE image ships neither curl nor wget; bash /dev/tcp does the job
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost:8080 && printf \"GET /api/health HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q ok <&3'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # TLS termination for everything (HTTP, WebSocket, LiveKit signaling) on one
+  # domain. Opt-in:  docker compose --profile tls up
+  caddy:
+    image: caddy:2
+    profiles: ["tls"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # with no DOMAIN set Caddy serves https://localhost with a self-signed cert
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
 
 volumes:
   pgdata:
   uploads:
+  caddy_data:
+  caddy_config:

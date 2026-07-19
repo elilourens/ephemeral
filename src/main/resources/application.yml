@@ -18,6 +18,7 @@ spring:
 
 server:
   port: ${PORT:8080}
+  shutdown: graceful
   # tolerate large/stale browser cookies from other apps sharing localhost
   max-http-request-header-size: 64KB
 
@@ -26,8 +27,10 @@ ephemeral:
   cleanup-interval: ${CLEANUP_INTERVAL:15m}
   jwt-secret: ${JWT_SECRET:dev-only-insecure-secret-change-me-please-0123456789}
   encryption-key: ${ENCRYPTION_KEY:}
+  search-index: ${SEARCH_INDEX:true}
   jwt-ttl: 7d
   storage-dir: ${STORAGE_DIR:./data/uploads}
+  tenor-key: ${TENOR_KEY:}
   livekit:
     url: ${LIVEKIT_URL:ws://localhost:7880}
     api-key: ${LIVEKIT_API_KEY:devkey}

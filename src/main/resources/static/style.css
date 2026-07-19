@@ -1657,3 +1657,81 @@ button:active, .btn:active { transform: scale(.94); }
 @media (prefers-reduced-motion: reduce) {
   button, .btn, .guild-icon { transition: none; }
 }
+
+/* ====================== NIGHT GLASS TEXT + SQUARE PANES =================
+   User direction: black type becomes white/grey — which needs the glass to
+   go DARK to hold contrast over the photo's white clouds — and the four
+   BACKGROUND panes go square. Composer/header capsules, menus and controls
+   keep their curves. */
+:root {
+  --text: #ffffff; --text-muted: #f2f5f9; --text-faint: #e2e8ef;
+  --text-link: #bcd7ff;
+  --accent: #7db4f7; --accent-hover: #98c4fa;
+  --accent-quiet: rgba(125, 180, 247, .2); --accent-line: rgba(125, 180, 247, .42);
+  --accent-ink: #0d1726;
+  --hover: rgba(255, 255, 255, .08); --active: rgba(255, 255, 255, .14);
+  --surface: #333c49; --surface-2: #3b4553;
+  --border: rgba(255, 255, 255, .15); --border-strong: rgba(255, 255, 255, .3);
+  --bg-0: #2b323d; --bg-1: #303845; --bg-2: #363f4d; --bg-3: #414b5a;
+}
+
+/* the four background panes: dark glass, square */
+#content {
+  background: rgba(30, 38, 52, .55);
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, .14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 18px 44px rgba(8, 14, 26, .35);
+}
+.sidebar, .member-column {
+  background: rgba(28, 35, 48, .48);
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, .13);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .11), 0 18px 40px rgba(8, 14, 26, .32);
+}
+.guild-rail {
+  background: rgba(28, 35, 48, .44);
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, .12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 16px 36px rgba(8, 14, 26, .32);
+}
+
+/* floating bars + small glass stay ROUNDED but flip dark */
+.content-header, .composer {
+  background: rgba(36, 44, 60, .52);
+  border: 1px solid rgba(255, 255, 255, .16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 10px 26px rgba(8, 14, 26, .3);
+}
+.context-menu, .modal, .mention-pop, .profile-card, .emoji-pop {
+  background: rgba(44, 52, 68, .82);
+  border: 1px solid rgba(255, 255, 255, .2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), 0 28px 64px rgba(4, 8, 16, .5);
+}
+.modal { background: rgba(44, 52, 68, .88); }
+.modal-backdrop { background: rgba(8, 13, 22, .45); }
+
+/* raised elements + light-theme leftovers, retinted for dark glass */
+.text-input, .composer textarea {
+  background: rgba(255, 255, 255, .09); color: var(--text);
+  border-color: rgba(255, 255, 255, .18);
+}
+.text-input::placeholder, .composer textarea::placeholder { color: var(--text-faint); }
+.md-code, .md-inline-code { background: rgba(0, 0, 0, .3); color: #e8edf4; border-color: rgba(255, 255, 255, .12); }
+.spoiler { background: rgba(0, 0, 0, .5); }
+.spoiler.revealed { background: rgba(255, 255, 255, .08); }
+.attach-file, .unfurl, .embed-card, .yt-facade { background: rgba(255, 255, 255, .07); border-color: var(--border); }
+.toast { background: #333c49; color: var(--text); border-color: rgba(255, 255, 255, .2); }
+*::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .22); }
+.message:hover { background: rgba(255, 255, 255, .05); }
+.guild-icon.action { background: rgba(255, 255, 255, .1); color: var(--text-muted); }
+.guild-icon.action:hover { background: var(--accent); color: var(--accent-ink); }
+.ctx-item:hover, .qs-item.active, .qs-item:hover { background: rgba(255, 255, 255, .1); }
+
+/* reduced-transparency fallback must match the light-text world */
+@media (prefers-reduced-transparency: reduce) {
+  #content, .guild-rail, .sidebar, .member-column, .content-header, .composer,
+  .context-menu, .modal, .mention-pop, .profile-card, .emoji-pop {
+    background: rgba(40, 48, 62, .96);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}

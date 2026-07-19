@@ -1,6 +1,13 @@
 spring:
   application:
     name: ephemeral
+  web:
+    resources:
+      cache:
+        cachecontrol:
+          # no-build frontend: browsers must revalidate (cheap 304s) so UI
+          # changes appear on plain refresh instead of being heuristically cached
+          no-cache: true
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/ephemeral}
     username: ${DB_USER:ephemeral}

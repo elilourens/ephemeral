@@ -1083,6 +1083,14 @@ button .icon { pointer-events: none; }
 .md-code:hover .code-copy { opacity: 1; }
 .code-copy:hover { color: var(--text); background: var(--hover); }
 
+/* edit history modal */
+.edited { cursor: pointer; }
+.edited:hover { text-decoration: underline; }
+.hist-row { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.hist-row:last-child { border-bottom: none; }
+.hist-time { font-size: 11px; color: var(--text-faint); margin-bottom: 2px; }
+.hist-body { font-size: 14px; color: var(--text); overflow-wrap: anywhere; }
+
 /* quick switcher (Ctrl/Cmd+K) */
 .qs-list { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; max-height: 340px; overflow-y: auto; }
 .qs-item {

@@ -12,7 +12,8 @@ npm init -y && npm install playwright && npx playwright install chromium-headles
 # 3. run a suite (BASE defaults to http://localhost:8090)
 node e2e/ui-check.mjs     # auth, chat, markdown, hover toolbar, context menus, no tooltips
 node e2e/qol-check.mjs    # day dividers, code copy, ArrowUp-edit, Ctrl+K switcher, privacy tab
-node e2e/dm-check.mjs     # two browsers: DM by username, live delivery, unread badge
+node e2e/dm-check.mjs      # two browsers: DM by username, live delivery, unread badge
+node e2e/history-check.mjs # edit twice, click (edited), history modal shows versions
 ```
 
 Each suite prints `PASS`/`FAIL` per check and `RESULT n/m`; a non-zero exit

@@ -777,6 +777,34 @@ class EphemeralE2ETest {
     }
 
     @Test
+    void editHistoryIsKeptEncryptedAndScoped() throws Exception {
+        Session s = register(uniqueName());
+        Session outsider = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", s.token(), Map.of("name", "Hist"), 200);
+        UUID chan = channelOfType(guild, "text");
+
+        UUID msg = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
+                s.token(), Map.of("content", "draft one"), 200).get("id").asText());
+        assertThat(call("GET", "/api/messages/" + msg + "/history", s.token(), null, 200)).isEmpty();
+
+        call("PATCH", "/api/messages/" + msg, s.token(), Map.of("content", "draft two"), 200);
+        call("PATCH", "/api/messages/" + msg, s.token(), Map.of("content", "final"), 200);
+
+        JsonNode hist = call("GET", "/api/messages/" + msg + "/history", s.token(), null, 200);
+        assertThat(hist).hasSize(2);
+        assertThat(hist.get(0).get("content").asText()).isEqualTo("draft two"); // newest first
+        assertThat(hist.get(1).get("content").asText()).isEqualTo("draft one");
+        // stored encrypted, like the message itself
+        assertThat(jdbc.queryForList("select prev_content from message_edits where message_id = :m",
+                Map.of("m", msg), String.class)).allSatisfy(c -> assertThat(c).startsWith("enc:v1:"));
+        // non-members can't read it; history dies with the message (cascade)
+        call("GET", "/api/messages/" + msg + "/history", outsider.token(), null, 403);
+        call("DELETE", "/api/messages/" + msg, s.token(), null, 204);
+        assertThat(jdbc.queryForObject("select count(*) from message_edits where message_id = :m",
+                Map.of("m", msg), Integer.class)).isZero();
+    }
+
+    @Test
     void everythingIsEncryptedAtRest() throws Exception {
         Session s = register(uniqueName());
         JsonNode guild = call("POST", "/api/guilds", s.token(), Map.of("name", "Vault"), 200);

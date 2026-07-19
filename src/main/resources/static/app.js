@@ -493,6 +493,7 @@
     send: (cid, content, attachmentIds, replyToId) =>
       api(`/api/channels/${cid}/messages`, { method: "POST", body: { content, attachmentIds, replyToId } }),
     editMsg: (id, content) => api(`/api/messages/${id}`, { method: "PATCH", body: { content } }),
+    msgHistory: (id) => api(`/api/messages/${id}/history`),
     saveMsg: (id) => api(`/api/messages/${id}/save`, { method: "POST" }),
     unsaveMsg: (id) => api(`/api/messages/${id}/save`, { method: "DELETE" }),
     deleteMsg: (id) => api(`/api/messages/${id}`, { method: "DELETE" }),
@@ -1765,6 +1766,22 @@
 
     if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
     updateJumpPresent();
+  }
+
+  // ---- edit history: click "(edited)" to see prior versions ----
+  async function openEditHistory(messageId) {
+    let versions;
+    try { versions = await API.msgHistory(messageId); } catch { return; }
+    if (!versions.length) { toast("No earlier versions"); return; }
+    const rows = versions.map((v) => h("div", { class: "hist-row" },
+      h("div", { class: "hist-time", text: new Date(v.editedAt).toLocaleString() }),
+      h("div", { class: "hist-body", html: renderMarkdown(v.content) })));
+    modal({
+      title: "Edit history",
+      subtitle: "Earlier versions vanish together with the message.",
+      body: rows,
+      footer: [h("button", { class: "btn", text: "Close", onclick: closeModal })],
+    });
   }
 
   // ---- quick switcher (Ctrl/Cmd+K): fuzzy-jump to any channel, DM or server ----
@@ -4652,12 +4669,14 @@
       }, { keepOpen: true });
     });
 
-    // reveal spoilers on click + copy code blocks (delegated)
+    // reveal spoilers on click + copy code blocks + edit history (delegated)
     $("message-list").addEventListener("click", (e) => {
       const sp = e.target.closest(".spoiler");
       if (sp && !sp.classList.contains("revealed")) { e.stopPropagation(); sp.classList.add("revealed"); }
       const cc = e.target.closest(".code-copy");
       if (cc) { e.stopPropagation(); copyText(cc.nextElementSibling.textContent); }
+      const ed = e.target.closest(".edited");
+      if (ed) { e.stopPropagation(); openEditHistory(ed.closest(".message").dataset.id); }
     });
 
     // pinned messages viewer

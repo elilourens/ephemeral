@@ -51,6 +51,12 @@ public class MessageController {
         return messages.edit(user.id(), id, req.content());
     }
 
+    /** Prior versions of an edited message, newest first (vanishes with the message). */
+    @GetMapping("/api/messages/{id}/history")
+    public java.util.List<java.util.Map<String, Object>> history(@CurrentUser AuthUser user, @PathVariable UUID id) {
+        return messages.history(user.id(), id);
+    }
+
     @PostMapping("/api/messages/{id}/react")
     public MessageDto react(@CurrentUser AuthUser user, @PathVariable UUID id, @RequestBody ReactionRequest req) {
         return messages.toggleReaction(user.id(), id, req.emoji());

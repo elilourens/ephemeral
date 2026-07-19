@@ -184,6 +184,12 @@ public class MessageService {
         if (body.isEmpty()) {
             throw ApiException.badRequest("message is empty");
         }
+        // keep the old version (already ciphertext — copied verbatim); it cascades
+        // away with the message, so history obeys the same 7-day vanish
+        jdbc.update("""
+                insert into message_edits (id, message_id, prev_content)
+                select :eid, id, content from messages where id = :m
+                """, Map.of("eid", Ids.newId(), "m", messageId));
         jdbc.update("""
                 update messages set content = :c, edited_at = now(),
                        content_tsv = to_tsvector('english', :plain), has_link = :link
@@ -298,6 +304,16 @@ public class MessageService {
         jdbc.update("delete from messages where id = :m", Map.of("m", messageId));
         storage.deleteAll(keys);
         realtime.messageDeleted(channelId, messageId);
+    }
+
+    /** Prior versions of a message, newest edit first (the current text is not included). */
+    public List<Map<String, Object>> history(UUID userId, UUID messageId) {
+        guilds.requireChannelMember(userId, channelOf(messageId));
+        return jdbc.query("""
+                select id, prev_content from message_edits where message_id = :m order by id desc
+                """, Map.of("m", messageId), (rs, i) -> Map.of(
+                "editedAt", Ids.timestampOf(rs.getObject("id", UUID.class)),
+                "content", crypto.decrypt(rs.getString("prev_content"))));
     }
 
     public MessageDto getMessage(UUID viewerId, UUID id) {

@@ -800,3 +800,58 @@ files persist while referenced (documented in the empty-state copy). Client:
 drag-drop, hover + context actions, `storage_updated` realtime refresh.
 JUnit 47/47 (`storageChannelLifecycle`: permissions, recursion, blob cleanup,
 purge exemption); browser storage-check 6/6.
+
+---
+
+## 26. Audit wave — bugs, hosting, and the architecture backlog
+
+A 4-agent parallel audit (backend bugs, frontend bugs, hosting research,
+architecture research) plus own review. **13 bugs fixed** (see the audit-wave
+commit) including two HIGH: the edit/pin/delete ban-bypass and the LiveKit
+webhook accepting client tokens. **Hosting: jar 110→32 MB**, compose memory
+limits + alpine PG + log rotation + pinned LiveKit, SerialGC, gzip, tuned
+Hikari/Tomcat/PG, V17 indexes.
+
+### Deferred (documented, not yet built) — recommended next, by value:
+
+1. **Signed/authorized file URLs.** `GET /api/files/{id}` is intentionally
+   unauthenticated because `<img>`/`<video>` tags can't send the bearer
+   header — so any leaked attachment UUID is world-readable (private DM images,
+   admin-only files). Proper fix: emit a short-lived signed token on file URLs
+   in DTOs (or a per-request `?t=` JWT like the WS uses) and gate message-bound
+   attachments through channel membership; keep icons/emoji/avatars public.
+   Real design work — the trust model ("we trust the host, UUIDs unguessable")
+   holds for now but this is the top security gap.
+2. **WS fan-out backpressure.** `RealtimeService.send()` blocks the caller
+   thread per recipient; one slow client stalls the broadcast, the sender's
+   request thread, and the scheduler. Fix: wrap sessions in
+   `ConcurrentWebSocketSessionDecorator(session, 5s, 512KB)` — but the handler
+   receives the RAW session in later callbacks, so the decorator must be stored
+   in attributes and used consistently in register/subscribe/removeSession or
+   sessions leak. ~1 careful commit.
+3. **Reconnect catch-up / event replay.** The client reconnects but never
+   refetches the gap — messages that expired during a disconnect stay on
+   screen (violates the vanish invariant). The `messages` table (UUIDv7) is the
+   replay log: on a non-first `ready`, refetch the open channel's latest page +
+   read-state + DM list. Zero new server state.
+4. **Rate limiting** (bucket4j-style in-memory filter: auth per-IP+username,
+   messages, uploads, unfurl/gif, search) — no login throttling today.
+5. **Session/token revocation** — 7-day JWT with no logout/revoke; single-node
+   makes a `sessions` table + in-process revoked-jti set nearly free.
+6. **Backup/restore runbook** for `pgdata` + `uploads` + escrowed
+   `ENCRYPTION_KEY` (dump before tar; the orphan sweep self-heals extra blobs).
+7. **PWA + self-hosted Web Push** (VAPID, RFC 8291) — push only when the user
+   has no live socket; critical given the 7-day vanish.
+8. **Media thumbnails** (max-512 encrypted sibling blob + width/height on
+   attachments) once phones are in play.
+9. **FTS at-rest caveat:** with `SEARCH_INDEX=true` the plaintext body is sent
+   to Postgres as a bind param for `to_tsvector` — keep PG statement logging off
+   or accept the trade-off (documented).
+10. **N+1 in the DM list** (`DmService.list` → per-channel `one()`); batch when
+    DM counts grow.
+
+Field references informing these: Discord gateway resume/replay, Mattermost
+reconnect + session revocation + backup docs, Zulip event queues, Synapse
+`rc_*` rate limits + media repo, Matrix MSC2918 refresh tokens, Spring
+`ConcurrentWebSocketSessionDecorator`, HikariCP pool sizing, Postgres
+LISTEN/NOTIFY as the 2-node escape hatch.

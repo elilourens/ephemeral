@@ -46,6 +46,11 @@ over the UDP range as SRTP, which WebRTC already encrypts.
 plain-HTTP origins as insecure, so mic/camera prompts only work on
 `localhost` or HTTPS — use option A or B if you want voice off-box.
 
+> **Note:** the production jar excludes the embedded-Postgres binaries (−79 MB).
+> Local dev without Docker therefore uses `mvn spring-boot:run
+> -Dspring-boot.run.profiles=dev` (embedded PG on the classpath), not
+> `java -jar` with the `dev` profile.
+
 ## Day-2 operations
 
 - **Update:** `git pull && docker compose up --build -d` (Flyway migrates the DB

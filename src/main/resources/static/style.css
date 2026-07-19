@@ -1847,3 +1847,14 @@ button:active, .btn:active { transform: scale(.94); }
 /* composer: one shared centerline for attach / text / mic / gif / emoji / send */
 .composer { align-items: center; }
 .composer textarea { padding: 9px 12px; }
+
+/* voice tiles: never balloon — solo/small calls get modest centered tiles
+   instead of one participant filling the whole pane */
+.voice-tiles {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 380px));
+  justify-content: center;
+  align-content: center;
+}
+.voice-tiles .tile { width: 100%; max-width: 380px; max-height: 260px; }
+/* video/screenshare keeps room: with media the tile may grow to 560px */
+.voice-tiles .tile.has-video, .voice-tiles .tile.screen-tile { max-width: 560px; max-height: none; }

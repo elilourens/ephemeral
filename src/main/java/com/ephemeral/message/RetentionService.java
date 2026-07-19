@@ -46,12 +46,15 @@ public class RetentionService {
         UUID boundary = Ids.boundary(Instant.now().minus(props.getRetention()));
         messages += purgeChannels("c.retention_ms is null", Map.of("b", boundary));
 
-        // never-bound uploads age out on the default window
+        // never-bound uploads age out on the default window — except attachments
+        // still serving as a server icon
+        String orphanCond = " message_id is null and id < :b"
+                + " and id not in (select icon_id from guilds where icon_id is not null)";
         List<String> orphanKeys = jdbc.queryForList(
-                "select storage_key from attachments where message_id is null and id < :b",
+                "select storage_key from attachments where" + orphanCond,
                 Map.of("b", boundary), String.class);
         int orphanUploads = jdbc.update(
-                "delete from attachments where message_id is null and id < :b", Map.of("b", boundary));
+                "delete from attachments where" + orphanCond, Map.of("b", boundary));
         storage.deleteAll(orphanKeys);
 
         // the admin audit log is itself ephemeral: 30 days

@@ -807,6 +807,66 @@ class EphemeralE2ETest {
     }
 
     @Test
+    void customServerIcons() throws Exception {
+        Session admin = register(uniqueName());
+        Session member = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Iconic"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+        assertThat(guild.get("iconUrl").isNull()).isTrue();
+
+        // a text upload is rejected; an image works (admin only)
+        UUID txt = uploadFile(admin.token(), "notes.txt", "not an image");
+        call("PUT", "/api/guilds/" + gid + "/icon", admin.token(), Map.of("attachmentId", txt), 400);
+        UUID img = uploadImage(admin.token(), "icon.png");
+        call("PUT", "/api/guilds/" + gid + "/icon", member.token(), Map.of("attachmentId", img), 403);
+        JsonNode updated = call("PUT", "/api/guilds/" + gid + "/icon", admin.token(),
+                Map.of("attachmentId", img), 200);
+        assertThat(updated.get("iconUrl").asText()).isEqualTo("/api/files/" + img);
+        // you can't hijack someone else's upload as an icon
+        UUID theirs = uploadImage(member.token(), "sneaky.png");
+        call("PUT", "/api/guilds/" + gid + "/icon", admin.token(), Map.of("attachmentId", theirs), 400);
+
+        // an OLD icon survives the orphan-upload purge (referenced = exempt),
+        // while an equally old unreferenced upload dies
+        UUID oldIcon = Ids.boundary(Instant.now().minus(8, ChronoUnit.DAYS));
+        UUID oldOrphan = Ids.boundary(Instant.now().minus(8, ChronoUnit.DAYS).plusMillis(1));
+        insertAttachment(oldIcon, null, admin.userId());
+        insertAttachment(oldOrphan, null, admin.userId());
+        jdbc.update("update guilds set icon_id = :a where id = :g", Map.of("a", oldIcon, "g", gid));
+        retention.purgeExpired();
+        assertThat(jdbc.queryForObject("select count(*) from attachments where id = :a",
+                Map.of("a", oldIcon), Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from attachments where id = :a",
+                Map.of("a", oldOrphan), Integer.class)).isZero();
+
+        // clearing reverts to initials
+        assertThat(call("PUT", "/api/guilds/" + gid + "/icon", admin.token(),
+                new java.util.HashMap<>() {{ put("attachmentId", null); }}, 200)
+                .get("iconUrl").isNull()).isTrue();
+    }
+
+    private UUID uploadImage(String token, String filename) throws Exception {
+        // tiny valid PNG header + payload is enough — the server checks content type
+        String boundary = "----b" + System.nanoTime();
+        String crlf = "\r\n";
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.writeBytes(("--" + boundary + crlf).getBytes(StandardCharsets.UTF_8));
+        body.writeBytes(("Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"" + crlf)
+                .getBytes(StandardCharsets.UTF_8));
+        body.writeBytes(("Content-Type: image/png" + crlf + crlf).getBytes(StandardCharsets.UTF_8));
+        body.writeBytes(new byte[]{(byte) 0x89, 'P', 'N', 'G', 13, 10, 26, 10, 1, 2, 3});
+        body.writeBytes((crlf + "--" + boundary + "--" + crlf).getBytes(StandardCharsets.UTF_8));
+        HttpResponse<String> up = http.send(HttpRequest.newBuilder(URI.create(url("/api/uploads")))
+                        .header("Authorization", "Bearer " + token)
+                        .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                        .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray())).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(up.statusCode()).isEqualTo(200);
+        return UUID.fromString(mapper.readTree(up.body()).get("id").asText());
+    }
+
+    @Test
     void ghostTokensAreRejectedNot500() throws Exception {
         // a signed JWT whose user no longer exists (deleted account / reset DB)
         // must be a clean 401 — not an FK-violation 500 on the first write

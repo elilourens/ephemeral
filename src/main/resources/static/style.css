@@ -1083,6 +1083,14 @@ button .icon { pointer-events: none; }
 .md-code:hover .code-copy { opacity: 1; }
 .code-copy:hover { color: var(--text); background: var(--hover); }
 
+/* custom server icons */
+.guild-icon.has-img, .avatar.has-img { padding: 0; overflow: hidden; background: var(--surface); }
+.guild-icon.has-img img, .avatar.has-img img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit; }
+.icon-edit-row { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+.icon-edit-row .icon-preview { width: 56px; height: 56px; flex: none; display: grid; place-items: center;
+  border-radius: 18px; color: #fff; font-weight: 700; font-size: 18px; }
+.icon-edit-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+
 /* group DMs */
 .group-avatar { display: inline-grid; place-items: center; background: var(--accent-quiet); color: var(--accent); border-radius: 50%; }
 .dm-count { font-size: 10px; font-weight: 700; color: var(--text-faint); border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; }

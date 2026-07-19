@@ -472,6 +472,7 @@
     createGuild: (name) => api("/api/guilds", { method: "POST", body: { name } }),
     joinGuild: (id) => api(`/api/guilds/${id}/join`, { method: "POST" }),
     renameGuild: (id, name) => api(`/api/guilds/${id}`, { method: "PATCH", body: { name } }),
+    setGuildIcon: (id, attachmentId) => api(`/api/guilds/${id}/icon`, { method: "PUT", body: { attachmentId } }),
     leaveGuild: (id) => api(`/api/guilds/${id}/leave`, { method: "POST" }),
     deleteGuild: (id) => api(`/api/guilds/${id}`, { method: "DELETE" }),
     createChannel: (gid, name, type, adminOnly) =>
@@ -1623,13 +1624,16 @@
     for (const g of state.guilds) {
       const active = state.currentGuild && state.currentGuild.id === g.id;
       const { unread, mentions } = guildUnread(g);
-      const icon = h("div", {
-        class: "guild-icon",
-        "aria-label": g.name,
-        style: `background:${colorFor(g.id)}`,
-        text: initials(g.name),
-        onclick: () => selectGuild(g.id),
-      });
+      const icon = g.iconUrl
+        ? h("div", { class: "guild-icon has-img", "aria-label": g.name, onclick: () => selectGuild(g.id) },
+            h("img", { src: g.iconUrl, alt: "" }))
+        : h("div", {
+            class: "guild-icon",
+            "aria-label": g.name,
+            style: `background:${colorFor(g.id)}`,
+            text: initials(g.name),
+            onclick: () => selectGuild(g.id),
+          });
       icon.addEventListener("contextmenu", (e) => {
         e.preventDefault(); openGuildMenu(g, e.clientX, e.clientY);
       });
@@ -3693,13 +3697,52 @@
 
   // ---- server (guild) actions ----
   function renameGuildFlow(g) {
-    openRenameModal({
-      title: "Edit server", label: "Server name", current: g.name, placeholder: "My server",
-      onSubmit: async (name) => {
-        const updated = await API.renameGuild(g.id, name);
-        applyGuildUpdate(updated);
-        toast("Server renamed");
-      },
+    // name + custom icon in one place
+    const nameInput = h("input", { class: "text-input", value: g.name, placeholder: "My server", maxlength: "100" });
+    const err = h("div", { class: "modal-error" });
+    const preview = g.iconUrl
+      ? h("div", { class: "guild-icon has-img icon-preview" }, h("img", { src: g.iconUrl, alt: "" }))
+      : h("div", { class: "guild-icon icon-preview", style: `background:${colorFor(g.id)}`, text: initials(g.name) });
+    const file = h("input", { type: "file", accept: "image/*", class: "hidden" });
+    let pendingIcon; // attachment id uploaded but not yet saved
+    file.addEventListener("change", async () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      if (f.size > 2_000_000) { err.textContent = "Icons are capped at 2 MB"; return; }
+      try {
+        const up = await API.upload(f);
+        pendingIcon = up.id;
+        preview.innerHTML = ""; preview.style.background = "";
+        preview.classList.add("has-img");
+        preview.appendChild(h("img", { src: URL.createObjectURL(f), alt: "" }));
+      } catch (e) { err.textContent = e.message; }
+    });
+    let removeIcon = false;
+    const iconRow = h("div", { class: "icon-edit-row" }, preview,
+      h("div", { class: "icon-edit-btns" },
+        h("button", { class: "btn btn-secondary", text: "Upload icon", onclick: () => file.click() }),
+        g.iconUrl ? h("button", { class: "btn btn-secondary", text: "Remove icon", onclick: () => {
+          removeIcon = true; pendingIcon = null;
+          preview.classList.remove("has-img"); preview.innerHTML = "";
+          preview.style.background = colorFor(g.id); preview.textContent = initials(g.name);
+        } }) : null),
+      file);
+    const submit = async () => {
+      try {
+        let updated = null;
+        const name = nameInput.value.trim();
+        if (name && name !== g.name) updated = await API.renameGuild(g.id, name);
+        if (pendingIcon) updated = await API.setGuildIcon(g.id, pendingIcon);
+        else if (removeIcon) updated = await API.setGuildIcon(g.id, null);
+        if (updated) { applyGuildUpdate(updated); toast("Server updated"); }
+        closeModal();
+      } catch (e) { err.textContent = e.message; }
+    };
+    modal({
+      title: "Edit server",
+      body: [iconRow, h("label", {}, "Server name", nameInput), err],
+      footer: [h("button", { class: "btn btn-secondary", text: "Cancel", onclick: closeModal }),
+        h("button", { class: "btn", text: "Save", onclick: submit })],
     });
   }
   // Slow-mode presets (label -> seconds), matching Discord.
@@ -3834,7 +3877,8 @@
     for (const g of joinable) {
       const btn = h("button", { class: "btn", text: "Join" });
       const item = h("div", { class: "discover-item" },
-        avatar(g.name, g.id, "lg"),
+        g.iconUrl ? h("span", { class: "avatar lg has-img" }, h("img", { src: g.iconUrl, alt: "" }))
+                  : avatar(g.name, g.id, "lg"),
         h("div", { class: "di-info" },
           h("div", { class: "di-name", text: g.name }),
           h("div", { class: "di-sub", text: `${(g.channels || []).length} channel(s)` })

@@ -178,10 +178,10 @@ public class GuildService {
 
     /** Build a guild, hiding admin-only channels from non-admin viewers. */
     public GuildDto buildGuild(UUID guildId, boolean includeAdminOnly) {
-        var head = jdbc.query("select id, name, owner_id from guilds where id = :id",
+        var head = jdbc.query("select id, name, owner_id, icon_id from guilds where id = :id",
                 Map.of("id", guildId),
                 (rs, i) -> new Object[]{rs.getObject("id", UUID.class), rs.getString("name"),
-                        rs.getObject("owner_id", UUID.class)});
+                        rs.getObject("owner_id", UUID.class), rs.getObject("icon_id", UUID.class)});
         if (head.isEmpty()) {
             throw ApiException.notFound("server not found");
         }
@@ -190,7 +190,39 @@ public class GuildService {
         List<ChannelDto> channels = jdbc.query(
                 "select " + CHANNEL_COLS + " from channels where guild_id = :id" + where + " order by position, name",
                 Map.of("id", guildId), CHANNEL_MAPPER);
-        return new GuildDto((UUID) g[0], (String) g[1], (UUID) g[2], channels);
+        UUID iconId = (UUID) g[3];
+        return new GuildDto((UUID) g[0], (String) g[1], (UUID) g[2],
+                iconId == null ? null : "/api/files/" + iconId, channels);
+    }
+
+    /**
+     * Set (or clear, with null) the server's custom icon. The attachment must be
+     * the caller's own fresh image upload — never someone else's or a message's.
+     */
+    public GuildDto setIcon(UUID userId, UUID guildId, UUID attachmentId) {
+        requireAdmin(userId, guildId);
+        if (attachmentId != null) {
+            var rows = jdbc.query("""
+                    select owner_id, message_id, content_type, size_bytes
+                    from attachments where id = :a
+                    """, Map.of("a", attachmentId), (rs, i) -> new Object[]{
+                    rs.getObject("owner_id", UUID.class), rs.getObject("message_id", UUID.class),
+                    rs.getString("content_type"), rs.getLong("size_bytes")});
+            if (rows.isEmpty() || !userId.equals(rows.get(0)[0]) || rows.get(0)[1] != null) {
+                throw ApiException.badRequest("upload the icon first, then set it");
+            }
+            String ct = (String) rows.get(0)[2];
+            if (ct == null || !ct.startsWith("image/")) {
+                throw ApiException.badRequest("the icon must be an image");
+            }
+            if ((long) rows.get(0)[3] > 2_000_000L) {
+                throw ApiException.badRequest("icons are capped at 2 MB");
+            }
+        }
+        jdbc.update("update guilds set icon_id = :a where id = :g",
+                new MapSqlParameterSource().addValue("a", attachmentId).addValue("g", guildId));
+        audit.log(guildId, userId, "guild.icon", null, attachmentId == null ? "removed" : "changed");
+        return buildGuild(guildId);
     }
 
     private GuildDto buildGuildFor(UUID userId, UUID guildId) {

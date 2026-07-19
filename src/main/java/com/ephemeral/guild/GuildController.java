@@ -74,6 +74,15 @@ public class GuildController {
         return guilds.renameGuild(user.id(), id, req.name());
     }
 
+    public record IconRequest(UUID attachmentId) {}
+
+    /** Set (admin) or clear (null attachmentId) the server's custom icon. */
+    @PutMapping("/api/guilds/{id}/icon")
+    public GuildDto setIcon(@CurrentUser AuthUser user, @PathVariable UUID id,
+                            @RequestBody IconRequest req) {
+        return guilds.setIcon(user.id(), id, req == null ? null : req.attachmentId());
+    }
+
     @PostMapping("/api/guilds/{id}/leave")
     public ResponseEntity<Void> leave(@CurrentUser AuthUser user, @PathVariable UUID id) {
         guilds.leaveGuild(user.id(), id);

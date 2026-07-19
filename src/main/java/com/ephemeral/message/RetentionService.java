@@ -104,12 +104,12 @@ public class RetentionService {
                 .filter(k -> !referenced.contains(k))
                 .filter(k -> storage.lastModified(k).isBefore(cutoff))
                 .toList();
-        // SAFETY: an empty attachments table with files on disk, or a sweep that
-        // would erase most of the store, means this database does NOT own that
-        // directory (e.g. a second instance pointed at the same STORAGE_DIR).
-        // Refuse to mass-delete — this exact misconfiguration once ate real data.
+        // SAFETY: if the attachments table knows NOTHING yet files exist on disk,
+        // or EVERY file on a non-trivial store looks orphaned, this database does
+        // not own that directory (e.g. a second instance pointed at the same
+        // STORAGE_DIR). Refuse to mass-delete — this once ate real user data.
         if (!orphans.isEmpty()
-                && (referenced.isEmpty() || (disk.size() >= 10 && orphans.size() * 2 > disk.size()))) {
+                && (referenced.isEmpty() || (disk.size() >= 20 && orphans.size() == disk.size()))) {
             log.warn("orphan sweep SKIPPED: {} of {} blobs look orphaned — storage dir "
                     + "likely shared with another instance or wrong database", orphans.size(), disk.size());
             return 0;

@@ -182,6 +182,9 @@ public class RealtimeService {
 
     /** A DM conversation changed shape (created / member added / kicked / renamed / left). */
     public void dmUpdated(UUID channelId, java.util.Collection<UUID> memberIds) {
+        // the participant set changed — drop the fan-out cache so a newly-added
+        // member starts receiving live messages (and a kicked one stops)
+        dmMembers.remove(channelId);
         sendToUsers(memberIds, Map.of("type", "dm_updated", "data", Map.of("channelId", channelId)));
     }
 

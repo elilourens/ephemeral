@@ -42,8 +42,21 @@ public class LiveKitWebhookController {
                 auth = auth.substring(7);
             }
             String body = new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            // authenticity: the header is a JWT LiveKit signed with the shared secret
-            Jwts.parser().verifyWith(key).build().parseSignedClaims(auth);
+            // authenticity: the header is a JWT LiveKit signed with the shared secret,
+            // AND its `sha256` claim must match this body's digest. Without the body
+            // binding, a normal client join-token (minted with the same secret) would
+            // validate here and let any user inject/forge presence events.
+            var claims = Jwts.parser().verifyWith(key).build().parseSignedClaims(auth).getPayload();
+            String expected = claims.get("sha256", String.class);
+            if (expected == null) {
+                throw new IllegalArgumentException("not a webhook token (no sha256 claim)");
+            }
+            String actual = java.util.Base64.getEncoder().encodeToString(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(body.getBytes(StandardCharsets.UTF_8)));
+            if (!java.security.MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8),
+                    actual.getBytes(StandardCharsets.UTF_8))) {
+                throw new IllegalArgumentException("webhook body hash mismatch");
+            }
 
             JsonNode ev = mapper.readTree(body);
             String event = ev.path("event").asText("");

@@ -1961,3 +1961,9 @@ button:active, .btn:active { transform: scale(.94); }
 .st-row:hover .st-del { opacity: 1; }
 .st-del:hover { background: rgba(224, 82, 82, .3); color: #fff; }
 .st-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--text-faint); text-align: center; padding: 40px; }
+
+/* .btn-danger (delete-server/leave/account confirm) was being flattened to a
+   smoke pill by the later equal-specificity .btn rule — restore its red here,
+   in the final override layer, so it wins the cascade. */
+.btn.btn-danger, .btn-danger { background: rgba(224, 82, 82, .55); color: #fff; border: 1px solid rgba(255, 140, 140, .5); }
+.btn.btn-danger:hover, .btn-danger:hover { background: rgba(224, 82, 82, .75); filter: none; }

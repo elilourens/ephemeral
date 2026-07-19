@@ -142,7 +142,7 @@ public class MessageService {
                     """, new MapSqlParameterSource()
                     .addValue("m", id).addValue("ids", attachmentIds).addValue("o", userId));
         }
-        Set<UUID> pinged = new LinkedHashSet<>(parseMentions(body, guildId));
+        Set<UUID> pinged = new LinkedHashSet<>(parseMentions(body, guildId, channelId));
         // replying pings the original author unless the sender opted out (pingReply=false)
         if (validReply != null && !Boolean.FALSE.equals(pingReply)) {
             jdbc.queryForList("select author_id from messages where id = :r",
@@ -163,7 +163,7 @@ public class MessageService {
         return dto;
     }
 
-    private List<UUID> parseMentions(String body, UUID guildId) {
+    private List<UUID> parseMentions(String body, UUID guildId, UUID channelId) {
         if (body == null || body.isEmpty()) {
             return List.of();
         }
@@ -178,11 +178,17 @@ public class MessageService {
         if (ids.isEmpty()) {
             return List.of();
         }
+        // DMs have no guild — resolve the mention against the participant list instead
+        if (guildId == null) {
+            return jdbc.queryForList("select user_id from dm_members where channel_id = :c and user_id in (:ids)",
+                    new MapSqlParameterSource().addValue("c", channelId).addValue("ids", ids), UUID.class);
+        }
         return jdbc.queryForList("select user_id from memberships where guild_id = :g and user_id in (:ids)",
                 new MapSqlParameterSource().addValue("g", guildId).addValue("ids", ids), UUID.class);
     }
 
     public MessageDto edit(UUID userId, UUID messageId, String content) {
+        guilds.requireChannelMember(userId, channelOf(messageId)); // banned/kicked users can't edit
         List<UUID> author = jdbc.queryForList("select author_id from messages where id = :m",
                 Map.of("m", messageId), UUID.class);
         if (author.isEmpty()) {
@@ -245,6 +251,7 @@ public class MessageService {
         }
         UUID channelId = meta.get(0)[0];
         UUID authorId = meta.get(0)[1];
+        guilds.requireChannelMember(userId, channelId); // banned/kicked users can't pin
         UUID guildId = guilds.guildIdOfChannel(channelId);
         boolean admin = guilds.role(userId, guildId).map("admin"::equals).orElse(false);
         if (!admin && !authorId.equals(userId)) {
@@ -304,6 +311,7 @@ public class MessageService {
         }
         UUID channelId = meta.get(0)[0];
         UUID authorId = meta.get(0)[1];
+        guilds.requireChannelMember(userId, channelId); // banned/kicked users can't delete
         UUID guildId = guilds.guildIdOfChannel(channelId);
         boolean isAdmin = guilds.role(userId, guildId).map("admin"::equals).orElse(false);
         if (!authorId.equals(userId) && !isAdmin) {

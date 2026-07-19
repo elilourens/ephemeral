@@ -4,9 +4,9 @@
 FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /app
 COPY pom.xml .
-RUN mvn -q -DskipTests dependency:go-offline
+RUN --mount=type=cache,target=/root/.m2 mvn -q -DskipTests dependency:go-offline
 COPY src ./src
-RUN mvn -q -DskipTests package
+RUN --mount=type=cache,target=/root/.m2 mvn -q -DskipTests package
 
 # ---- runtime stage ----
 FROM eclipse-temurin:21-jre
@@ -17,4 +17,6 @@ USER ephemeral
 EXPOSE 8080
 ENV STORAGE_DIR=/data/uploads
 VOLUME ["/data/uploads"]
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "app.jar"]
+# SerialGC + capped metaspace suit a small heap (10-user box); MaxRAMPercentage
+# reads the compose mem_limit cgroup, so the heap tracks the container, not the host.
+ENTRYPOINT ["java", "-XX:+UseSerialGC", "-XX:MaxRAMPercentage=70", "-XX:MaxMetaspaceSize=128m", "-jar", "app.jar"]

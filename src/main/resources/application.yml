@@ -12,6 +12,11 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/ephemeral}
     username: ${DB_USER:ephemeral}
     password: ${DB_PASSWORD:ephemeral}
+    hikari:
+      # ~10 users on a 1-2 vCPU box: a small pool has lower latency under
+      # contention than the default 10 (HikariCP "About Pool Sizing")
+      maximum-pool-size: 5
+      minimum-idle: 2
   flyway:
     enabled: true
     baseline-on-migrate: true
@@ -28,6 +33,13 @@ server:
   shutdown: graceful
   # tolerate large/stale browser cookies from other apps sharing localhost
   max-http-request-header-size: 64KB
+  compression:
+    enabled: true                 # app.js/style.css/vendor drop ~65% on the wire
+    min-response-size: 1KB
+    mime-types: text/html,text/css,application/javascript,application/json,image/svg+xml
+  tomcat:
+    threads:
+      max: 25                     # 200 default is wild overkill for a friend group
 
 ephemeral:
   retention: ${RETENTION:7d}
@@ -45,4 +57,4 @@ ephemeral:
 
 logging:
   level:
-    com.ephemeral: DEBUG
+    com.ephemeral: ${LOG_LEVEL:INFO}   # DEBUG in dev via LOG_LEVEL=DEBUG

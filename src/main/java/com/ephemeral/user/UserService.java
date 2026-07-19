@@ -152,6 +152,17 @@ public class UserService {
                     join guilds g on g.id = c.guild_id
                 where g.owner_id = :u
                 """, Map.of("u", userId), String.class);
+        // Hand off any group DMs this user owns to a remaining member — otherwise
+        // dm_owner_id goes null (ON DELETE SET NULL) and the group becomes
+        // permanently unmoderatable (nobody can kick or take over).
+        for (UUID gdm : jdbc.queryForList(
+                "select id from channels where dm_owner_id = :u", Map.of("u", userId), UUID.class)) {
+            List<UUID> heir = jdbc.queryForList(
+                    "select user_id from dm_members where channel_id = :c and user_id <> :u order by user_id limit 1",
+                    Map.of("c", gdm, "u", userId), UUID.class);
+            jdbc.update("update channels set dm_owner_id = :h where id = :c",
+                    new MapSqlParameterSource().addValue("h", heir.isEmpty() ? null : heir.get(0)).addValue("c", gdm));
+        }
         // Owned servers first (owner_id has no cascade), then the user themself.
         jdbc.update("delete from guilds where owner_id = :u", Map.of("u", userId));
         jdbc.update("delete from users where id = :u", Map.of("u", userId));

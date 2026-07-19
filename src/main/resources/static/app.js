@@ -268,6 +268,7 @@
     check: '<path d="M20 6 9 17l-5-5"/>',
     folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     "folder-plus": '<path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+    upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>',
     scroll: '<path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>',
     play: '<polygon points="6 3 20 12 6 21 6 3"/>',
     pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
@@ -1228,6 +1229,10 @@
       if (!this.available()) { toast("Voice is unavailable (LiveKit failed to load)", true); return; }
       if (this.room && this.channelId === channel.id) { renderVoiceConnected(); this.rebuildRoster(); return; } // already here
       if (this.room) { await this.leave(); } // switching to a different voice channel
+      // Reentrancy guard: selectChannel fire-and-forgets join(); two overlapping
+      // joins (click A then B before A connects) would both pass the guard above
+      // and leak a live room. Each join claims a token; a superseded one bails.
+      const seq = ++this._joinSeq;
       if (!this._escBound) {
         this._escBound = true;
         document.addEventListener("keydown", (e) => { if (e.key === "Escape" && this.focusedKey) this.unfocus(); });
@@ -1237,6 +1242,7 @@
       try {
         tok = await API.voiceToken(channel.id);
       } catch (e) { toast(e.message, true); setVoiceStatus(""); return; }
+      if (seq !== this._joinSeq) { return; } // superseded while fetching the token
 
       const room = new LK.Room(roomOptions());
       this.room = room;
@@ -1279,6 +1285,7 @@
 
       try {
         await room.connect(tok.url, tok.token);
+        if (seq !== this._joinSeq) { try { room.disconnect(); } catch {} return; } // superseded mid-connect
         ws.send({ type: "voice_join", channelId: channel.id }); // presence without webhooks
         this.mic = true;
         await this.setMicEnabled(true); // no-op while alone; starts when others join
@@ -1577,9 +1584,15 @@
       const tiles = $("voice-tiles"), sink = $("voice-audio-sink");
       if (tiles) tiles.innerHTML = "";
       if (sink) sink.innerHTML = "";
+      setVoiceStatus("");
       renderVoiceBar(); // room is null now -> hides the bar
-      // Re-render placeholder if the voice channel is still open.
-      if (state.currentChannel && state.currentChannel.type === "voice") renderVoiceIdle(state.currentChannel);
+      // Return to a sensible view: voice channel -> its idle placeholder;
+      // a DM call -> back to the DM chat (not a dead blank voice stage).
+      if (state.currentChannel && state.currentChannel.type === "voice") {
+        renderVoiceIdle(state.currentChannel);
+      } else if (state.currentDm && state.currentChannel && state.currentChannel.type === "dm") {
+        selectDm(state.currentDm);
+      }
     },
   };
 
@@ -1622,13 +1635,17 @@
       h("div", { class: "search-hint", text: "Loading…" }));
     view.append(header, list);
 
-    // drag & drop anywhere in the view
-    ["dragover", "drop"].forEach((ev) => view.addEventListener(ev, (e) => e.preventDefault()));
-    view.addEventListener("drop", async (e) => {
+    // drag & drop — ASSIGN handlers (not addEventListener) so re-renders replace
+    // rather than stack them; read the live channel at drop time, never a stale one.
+    view.ondragover = (e) => e.preventDefault();
+    view.ondrop = async (e) => {
+      e.preventDefault();
       if (!e.dataTransfer || !e.dataTransfer.files.length) return;
-      for (const f of [...e.dataTransfer.files]) await storeFile(c, f);
-      renderStorageView(c);
-    });
+      const cur = state.currentChannel;
+      if (!cur || cur.type !== "storage") return;
+      for (const f of [...e.dataTransfer.files]) await storeFile(cur, f);
+      renderStorageView(cur);
+    };
 
     let items;
     try { items = await API.storageList(c.id, storageParentId()); }
@@ -2565,8 +2582,10 @@
     load("");
   }
 
+  // text channels, voice text-chat and DMs all accept messages/typing/mentions
+  function isChatChannel(c) { return !!c && (c.type === "text" || c.type === "dm" || c.type === "voice"); }
   async function sendGif(url) {
-    if (!state.currentChannel || state.currentChannel.type !== "text") return;
+    if (!isChatChannel(state.currentChannel)) return;
     try {
       const msg = await API.send(state.currentChannel.id, url, [], null);
       onIncomingMessage(msg);
@@ -3501,7 +3520,10 @@
   // realtime message helpers
   function onIncomingMessage(m) {
     const scroll = $("message-scroll");
-    const wasNearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 160;
+    // while on a call view the chat is display:none, so scroll dims read 0 and
+    // "near bottom" is falsely true — don't auto-ack messages you can't see
+    const visible = !$("chat-view").classList.contains("hidden");
+    const wasNearBottom = visible && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 160;
     const idx = state.messages.findIndex((x) => x.id === m.id);
     if (idx >= 0) { state.messages[idx] = m; }
     else { state.messages.push(m); }
@@ -3518,9 +3540,14 @@
       ackChannel(state.currentChannel.id, state.messages[state.messages.length - 1].id);
     }
   }
+  // Update an ALREADY-loaded message in place (reactions/pins/edits). Never
+  // appends — a reaction on a message outside the loaded window must not
+  // teleport that old message to the bottom of the chat. New messages arrive
+  // via onIncomingMessage instead.
   function upsertMessage(m) {
     const idx = state.messages.findIndex((x) => x.id === m.id);
-    if (idx >= 0) state.messages[idx] = m; else state.messages.push(m);
+    if (idx < 0) return;
+    state.messages[idx] = m;
     renderMessages();
   }
   function removeMessage(id) {
@@ -3640,7 +3667,7 @@
 
   function maybeSendTyping() {
     if (media.shareTyping === false) return; // privacy: never broadcast typing
-    if (!state.currentChannel || state.currentChannel.type !== "text") return;
+    if (!isChatChannel(state.currentChannel)) return;
     const now = Date.now();
     if (now - lastTypingSent > 2500) {
       lastTypingSent = now;
@@ -4073,10 +4100,10 @@
   }
   function removeGuildLocally(gid) {
     state.guilds = state.guilds.filter((x) => x.id !== gid);
+    ws.unsubscribeGuild(gid); // stop receiving events (and phantom mention badges) from a left server
     if (state.currentGuild && state.currentGuild.id === gid) {
       state.currentGuild = null;
       state.currentChannel = null;
-      if (ws.guildSub === gid) ws.guildSub = null;
       renderGuildRail();
       const next = state.guilds[0];
       if (next) selectGuild(next.id);
@@ -4644,9 +4671,13 @@
 
   function updateMentionAutocomplete() {
     const q = currentMentionQuery();
-    if (!q || !state.currentChannel || state.currentChannel.type !== "text") { closeMention(); return; }
+    if (!q || !isChatChannel(state.currentChannel)) { closeMention(); return; }
     const ql = q.query.toLowerCase();
-    const members = state.members.filter((m) => {
+    // guild channels mention members; group DMs mention the participants
+    const pool = state.currentDm
+      ? (state.currentDm.others || []).map((o) => ({ userId: o.id, username: o.username, displayName: o.displayName }))
+      : state.members;
+    const members = pool.filter((m) => {
       const dn = (m.displayName || m.username).toLowerCase();
       return dn.indexOf(ql) >= 0 || m.username.toLowerCase().indexOf(ql) >= 0;
     }).slice(0, 8);

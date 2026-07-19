@@ -867,6 +867,102 @@ class EphemeralE2ETest {
     }
 
     @Test
+    void kickedUserCannotEditPinOrDeleteOldMessages() throws Exception {
+        // Regression: edit/pin/delete only checked author identity, not current
+        // membership — a kicked user with a live JWT could rewrite/broadcast into
+        // a server they were removed from.
+        Session admin = register(uniqueName());
+        Session bob = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Boot"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        UUID msg = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
+                bob.token(), Map.of("content", "mine"), 200).get("id").asText());
+
+        call("DELETE", "/api/guilds/" + gid + "/members/" + bob.userId(), admin.token(), null, 204);
+        // now removed — every mutation on the old message must 403, not succeed
+        call("PATCH", "/api/messages/" + msg, bob.token(), Map.of("content", "rewritten after kick"), 403);
+        call("POST", "/api/messages/" + msg + "/pin", bob.token(), null, 403);
+        call("DELETE", "/api/messages/" + msg, bob.token(), null, 403);
+    }
+
+    @Test
+    void groupDmMentionRegistersAgainstParticipants() throws Exception {
+        // Regression: parseMentions resolved against memberships (null guild in a
+        // DM) so DM @mentions never produced a mention_count / inbox entry.
+        String bn = uniqueName(), dn = uniqueName();
+        Session a = register(uniqueName());
+        Session b = register(bn);
+        register(dn);
+        UUID chan = UUID.fromString(call("POST", "/api/dms", a.token(),
+                Map.of("usernames", List.of(bn, dn), "name", "grp"), 200).get("channelId").asText());
+        call("POST", "/api/channels/" + chan + "/messages", a.token(),
+                Map.of("content", "ping <@" + b.userId() + ">"), 200);
+        Integer mc = jdbc.queryForObject(
+                "select coalesce(max(mention_count),0) from read_state where user_id = :u and channel_id = :c",
+                Map.of("u", b.userId(), "c", chan), Integer.class);
+        assertThat(mc).isEqualTo(1);
+    }
+
+    @Test
+    void groupDmOwnershipTransfersWhenOwnerDeletesAccount() throws Exception {
+        String bn = uniqueName(), dn = uniqueName();
+        Session owner = register(uniqueName());
+        Session b = register(bn);
+        Session d = register(dn);
+        UUID chan = UUID.fromString(call("POST", "/api/dms", owner.token(),
+                Map.of("usernames", List.of(bn, dn), "name", "grp"), 200).get("channelId").asText());
+        call("DELETE", "/api/users/me", owner.token(), null, 204);
+        UUID newOwner = jdbc.queryForObject("select dm_owner_id from channels where id = :c",
+                Map.of("c", chan), UUID.class);
+        // ownership transfers to a surviving member instead of going null (which
+        // would leave the group permanently unmoderatable)
+        assertThat(newOwner).as("ownership must transfer, not go null").isNotNull();
+        assertThat(List.of(b.userId(), d.userId())).contains(newOwner);
+    }
+
+    @Test
+    void groupDmAddedMemberGetsLiveMessages() throws Exception {
+        // Regression: the DM fan-out cache was never invalidated, so a member
+        // added to a group AFTER its first message never received live messages.
+        String bn = uniqueName(), dn = uniqueName(), cn = uniqueName();
+        Session a = register(uniqueName());
+        register(bn); register(dn);
+        Session c = register(cn);
+
+        UUID chan = UUID.fromString(call("POST", "/api/dms", a.token(),
+                Map.of("usernames", List.of(bn, dn), "name", "grp"), 200).get("channelId").asText());
+        // seed a message so the fan-out cache populates with the initial members
+        call("POST", "/api/channels/" + chan + "/messages", a.token(), Map.of("content", "seed"), 200);
+
+        // now add c, then connect c's socket and expect the next message live
+        call("POST", "/api/dms/" + chan + "/members", a.token(), Map.of("username", cn), 200);
+
+        BlockingQueue<String> got = new LinkedBlockingQueue<>();
+        WebSocket ws = http.newWebSocketBuilder()
+                .buildAsync(URI.create("ws://localhost:" + port + "/ws?token=" + c.token()),
+                        new WebSocket.Listener() {
+                            @Override
+                            public CompletionStage<?> onText(WebSocket s, CharSequence d, boolean l) {
+                                got.add(d.toString()); s.request(1); return null;
+                            }
+                        }).get(5, TimeUnit.SECONDS);
+        assertThat(got.poll(5, TimeUnit.SECONDS)).contains("ready");
+        Thread.sleep(300); // DM fan-out is user-session based; no explicit subscribe needed
+
+        call("POST", "/api/channels/" + chan + "/messages", a.token(), Map.of("content", "welcome c"), 200);
+        String event = null;
+        long deadline = System.currentTimeMillis() + 5000;
+        while (System.currentTimeMillis() < deadline) {
+            String f = got.poll(5, TimeUnit.SECONDS);
+            if (f != null && f.contains("\"type\":\"message\"") && f.contains("welcome c")) { event = f; break; }
+        }
+        assertThat(event).as("added group-DM member must receive live messages").isNotNull();
+        ws.abort();
+    }
+
+    @Test
     void orphanSweepRefusesToEraseAForeignStorageDir() throws Exception {
         // Simulate a second instance pointed at another app's uploads: files on
         // disk that THIS database doesn't know. The sweep must refuse (this

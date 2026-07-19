@@ -115,6 +115,12 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- Keep the ~79 MB of embedded-Postgres binaries (all OSes) OUT of the
+                         production fat jar: they're only used by the dev profile + tests,
+                         both of which run from the plain classpath, never the repackaged jar. -->
+                    <excludeGroupIds>io.zonky.test,io.zonky.test.postgres</excludeGroupIds>
+                </configuration>
             </plugin>
         </plugins>
     </build>

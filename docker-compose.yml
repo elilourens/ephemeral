@@ -1,4 +1,4 @@
-# ephemeral — full self-hosted stack: app + postgres(+pgvector) + livekit.
+# ephemeral — full self-hosted stack: app + postgres + livekit.
 #
 #   cp .env.example .env   # fill in JWT_SECRET + ENCRYPTION_KEY (openssl rand -base64 32)
 #   docker compose up --build            # open http://localhost:8080
@@ -6,30 +6,48 @@
 # TLS (public internet): point a domain at this box, set DOMAIN + LIVEKIT_URL=wss://<domain>
 # in .env, then:  docker compose --profile tls up --build
 # On a private tailnet/LAN no TLS profile is needed — see DEPLOY.md.
+#
+# Tuned for a 1-2 GB VPS: memory limits enforce the JVM heap sizing, Postgres is
+# right-sized for a shared box, and logs rotate so a chatty run can't fill the disk.
+
+x-logging: &default-logging
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16      # plain postgres + the pgvector extension available
+    image: postgres:16-alpine          # pgvector isn't used (FTS via tsvector); alpine is ~190MB smaller
     restart: unless-stopped
+    <<: *default-logging
+    mem_limit: 384m
     environment:
       POSTGRES_DB: ephemeral
       POSTGRES_USER: ephemeral
       POSTGRES_PASSWORD: ${DB_PASSWORD:-ephemeral}
+    # right-sized for a box shared with a JVM (NOT a dedicated DB host)
+    command: >
+      postgres -c shared_buffers=128MB -c effective_cache_size=384MB
+               -c work_mem=8MB -c maintenance_work_mem=64MB
+               -c max_connections=25 -c random_page_cost=1.1
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ephemeral"]
-      interval: 5s
+      interval: 30s
       timeout: 3s
-      retries: 12
+      retries: 5
+      start_period: 15s
 
   livekit:
-    image: livekit/livekit-server:latest
+    image: livekit/livekit-server:v1.9  # pinned: an unvetted 'latest' shouldn't land on a pull
     restart: unless-stopped
+    <<: *default-logging
+    mem_limit: 300m
     ports:
       - "7880:7880"                    # signaling (WebSocket)
       - "7881:7881"                    # TCP media fallback
-      - "50000-50100:50000-50100/udp"  # WebRTC media (audio/video/screenshare)
+      - "50000-50060:50000-50060/udp"  # WebRTC media — 60 ports is plenty for a friend group
     environment:
       # Full config via env so keys live in .env, not in a tracked file.
       LIVEKIT_CONFIG: |
@@ -37,7 +55,7 @@ services:
         rtc:
           tcp_port: 7881
           port_range_start: 50000
-          port_range_end: 50100
+          port_range_end: 50060
           use_external_ip: ${LIVEKIT_EXTERNAL_IP:-false}
         keys:
           ${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-livekit-dev-secret-please-change-me-0123456789}
@@ -49,6 +67,8 @@ services:
   app:
     build: .
     restart: unless-stopped
+    <<: *default-logging
+    mem_limit: 512m                     # MaxRAMPercentage=70 -> ~358MB heap inside this cap
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,9 +93,10 @@ services:
     healthcheck:
       # the JRE image ships neither curl nor wget; bash /dev/tcp does the job
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost:8080 && printf \"GET /api/health HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q ok <&3'"]
-      interval: 15s
+      interval: 30s
       timeout: 5s
-      retries: 10
+      retries: 5
+      start_period: 40s
 
   # TLS termination for everything (HTTP, WebSocket, LiveKit signaling) on one
   # domain. Opt-in:  docker compose --profile tls up
@@ -83,6 +104,8 @@ services:
     image: caddy:2
     profiles: ["tls"]
     restart: unless-stopped
+    <<: *default-logging
+    mem_limit: 64m
     ports:
       - "80:80"
       - "443:443"

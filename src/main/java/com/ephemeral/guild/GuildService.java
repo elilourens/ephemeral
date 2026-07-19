@@ -114,6 +114,12 @@ public class GuildService {
         return n != null && n > 0;
     }
 
+    /** Participants of a DM channel (empty for guild channels). */
+    public List<UUID> dmMemberIds(UUID channelId) {
+        return jdbc.queryForList("select user_id from dm_members where channel_id = :c",
+                Map.of("c", channelId), UUID.class);
+    }
+
     public boolean isChannelMember(UUID userId, UUID channelId) {
         // DM channels: membership is the participant list, not a guild role
         List<UUID> g = jdbc.queryForList("select guild_id from channels where id = :c",

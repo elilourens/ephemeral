@@ -2762,9 +2762,16 @@
     if (video && voice.room && !voice.cam) { try { await voice.toggleCam(); } catch {} }
   }
 
-  function markDmUnread(channelId) {
-    const dm = (state.dms || []).find((x) => x.channelId === channelId);
-    if (!dm) return;
+  async function markDmUnread(channelId) {
+    let dm = (state.dms || []).find((x) => x.channelId === channelId);
+    if (!dm) {
+      // maybe a brand-new conversation: refresh the DM list before giving up
+      const guildChan = (state.guilds || []).some((g) => (g.channels || []).some((c) => c.id === channelId));
+      if (guildChan) return;
+      await loadDms();
+      dm = (state.dms || []).find((x) => x.channelId === channelId);
+      if (!dm) return;
+    }
     if (state.currentDm && state.currentDm.channelId === channelId
         && !$("chat-view").classList.contains("hidden")) return; // we're looking at it
     dm.unread = true;

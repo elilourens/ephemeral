@@ -28,8 +28,10 @@ public class RealtimeService {
     private final Map<UUID, Set<WebSocketSession>> channelSubs = new ConcurrentHashMap<>();
     private final Map<UUID, Set<WebSocketSession>> guildSubs = new ConcurrentHashMap<>();
     private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();
-    // channel -> guild is immutable, so cache to avoid a DB hit per broadcast.
+    private final Map<UUID, Set<WebSocketSession>> userSessions = new ConcurrentHashMap<>();
+    // channel -> guild and DM membership are immutable, so cache per broadcast.
     private final Map<UUID, UUID> channelGuild = new ConcurrentHashMap<>();
+    private final Map<UUID, java.util.List<UUID>> dmMembers = new ConcurrentHashMap<>();
 
     public RealtimeService(ObjectMapper mapper, com.ephemeral.guild.GuildService guilds) {
         this.mapper = mapper;
@@ -43,6 +45,9 @@ public class RealtimeService {
     /** Track every open session, for broadcasts to all clients (e.g. voice presence). */
     public void register(WebSocketSession session) {
         sessions.add(session);
+        if (session.getAttributes().get("user") instanceof AuthUser u) {
+            userSessions.computeIfAbsent(u.id(), k -> ConcurrentHashMap.newKeySet()).add(session);
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -93,6 +98,15 @@ public class RealtimeService {
 
     public void removeSession(WebSocketSession session) {
         sessions.remove(session);
+        if (session.getAttributes().get("user") instanceof AuthUser u) {
+            Set<WebSocketSession> mine = userSessions.get(u.id());
+            if (mine != null) {
+                mine.remove(session);
+                if (mine.isEmpty()) {
+                    userSessions.remove(u.id());
+                }
+            }
+        }
         for (UUID channelId : subsOf(session)) {
             Set<WebSocketSession> set = channelSubs.get(channelId);
             if (set != null) {
@@ -118,14 +132,26 @@ public class RealtimeService {
     // ---- outbound events --------------------------------------------------
 
     // Guild channels fan out to guild subscribers (so unread badges work in
-    // channels you aren't viewing); DM channels have no guild, so they fan out to
-    // that channel's direct subscribers instead.
+    // channels you aren't viewing); DM channels fan out to every session of each
+    // PARTICIPANT — no subscription needed, so the very first message of a brand
+    // new conversation still reaches the other person live.
     private void broadcastMessageEvent(UUID channelId, Map<String, Object> envelope) {
         UUID g = guildOf(channelId);
         if (g != null) {
             broadcastGuild(g, envelope, null);
-        } else {
-            broadcast(channelId, envelope, null);
+            return;
+        }
+        String json;
+        try {
+            json = mapper.writeValueAsString(envelope);
+        } catch (Exception e) {
+            log.warn("failed to serialize realtime event", e);
+            return;
+        }
+        for (UUID member : dmMembers.computeIfAbsent(channelId, guilds::dmMemberIds)) {
+            for (WebSocketSession s : userSessions.getOrDefault(member, Set.of())) {
+                send(s, json);
+            }
         }
     }
 

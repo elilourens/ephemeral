@@ -16,9 +16,7 @@ vivid backdrop; the reading surface stays calm and high-contrast.
    so text is legible even before the blur lands, plus a faint text-shadow.
 3. **One spacing scale.** 4 / 8 / 12 / 16 / 24 / 32 px. Space *around* a group is
    larger than space *within* it, so the eye can parse structure.
-4. **One accent, zero curves.** Azure `#57a9ff` stays the only accent. As of the
-   all-glass redesign every corner is SQUARE — a universal `border-radius: 0
-   !important` kill-switch ends style.css; delete that block to restore curves.
+4. **Consistent radii & one accent.** Azure `#57a9ff`. Rounded 12–20px on panels.
 5. **Motion is subtle and opt-out.** A slow backdrop drift + short 90–150ms
    transitions; everything collapses under `prefers-reduced-motion` and
    `prefers-reduced-transparency`.
@@ -26,13 +24,10 @@ vivid backdrop; the reading surface stays calm and high-contrast.
 
 ## The glass recipe
 
-- **Backdrop** (`#glass-bg`): a DARK storm sky (charcoal-to-grey gradient) with
-  three big grey cumulus clouds (pale crowns, slate bellies) drifting through.
-  Every pane — including the reading surface — is dark translucent glass
-  (rgba(44,52,64,.45-.55) + 26-30px blur) with hairline white borders and LIGHT
-  text (the "stormglass" token flip at the end of style.css). The bright-azure
-  day theme lives just above it in the cascade; delete the stormglass section
-  to get the daylight look back.
+- **Backdrop** (`#glass-bg`): a 5-stop radial mesh, slowly drifting — this is
+  what the glass refracts. The default is the **light** palette: soft pastel
+  blue / cyan / periwinkle / mint on white, with dark slate text on the frosted
+  white panels.
 - **Refraction filter** (`#glass-refract` in `index.html`): `feTurbulence`
   (fractal noise) → `feGaussianBlur` → `feDisplacementMap`. Size-independent, so
   it applies to any control without per-element maps.

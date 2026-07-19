@@ -1252,6 +1252,7 @@
 
       try {
         await room.connect(tok.url, tok.token);
+        ws.send({ type: "voice_join", channelId: channel.id }); // presence without webhooks
         this.mic = true;
         await this.setMicEnabled(true); // no-op while alone; starts when others join
         await this.applyInputGain(); // saved input volume ≠ 100% → attach gain chain
@@ -1538,6 +1539,7 @@
     },
 
     cleanup() {
+      if (this.channelId) ws.send({ type: "voice_leave", channelId: this.channelId });
       this.room = null;
       this.channelId = null;
       this._gainProc = null;
@@ -1869,14 +1871,16 @@
     return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
   }
 
-  // Toggle the "Jump to present" bar based on scroll position.
+  // Toggle the "Jump to present" bar — only when scrolled QUITE far back
+  // (over a full screen of history), not on every small scroll.
   function updateJumpPresent() {
     const jp = $("jump-present");
     if (!jp) return;
     const scroll = $("message-scroll");
     const chat = state.currentChannel && state.currentChannel.type === "text";
-    const nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 120;
-    jp.classList.toggle("hidden", nearBottom || !chat);
+    const behind = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
+    const farAway = behind > Math.max(700, scroll.clientHeight * 1.25);
+    jp.classList.toggle("hidden", !farAway || !chat);
   }
 
   function renderMessage(m, grouped) {
@@ -5158,10 +5162,8 @@
     $("message-scroll").addEventListener("scroll", (e) => {
       const s = e.target;
       if (s.scrollTop < 80) loadOlderMessages();
-      const nearBottom = s.scrollHeight - s.scrollTop - s.clientHeight < 120;
-      const jpBar = $("jump-present");
-      if (jpBar) jpBar.classList.toggle("hidden", nearBottom || !state.currentChannel || state.currentChannel.type !== "text");
-      if (nearBottom) ackCurrentLatest();
+      updateJumpPresent(); // single source of truth for the far-away threshold
+      if (s.scrollHeight - s.scrollTop - s.clientHeight < 120) ackCurrentLatest();
     });
 
     // members toggle — records an explicit preference that overrides the

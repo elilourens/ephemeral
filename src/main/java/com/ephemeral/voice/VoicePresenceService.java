@@ -72,8 +72,13 @@ public class VoicePresenceService {
             return;
         }
         String room = "channel-" + channelId;
-        Part part = byRoom.computeIfAbsent(room, k -> new ConcurrentHashMap<>())
-                .computeIfAbsent(userId, k -> new Part(userId));
+        // update-only: joins come from voice_join / webhooks (with a real name) —
+        // never create a ghost entry whose display name is the raw user id
+        Map<String, Part> parts = byRoom.get(room);
+        Part part = parts == null ? null : parts.get(userId);
+        if (part == null) {
+            return;
+        }
         part.muted = muted;
         part.deafened = deafened;
         part.screen = screen;

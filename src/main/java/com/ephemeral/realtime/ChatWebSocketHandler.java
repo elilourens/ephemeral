@@ -124,6 +124,18 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                                 node.path("screensharing").asBoolean(false));
                     }
                 }
+                // explicit join/leave from the client so voice presence works even
+                // without LiveKit webhooks (and carries the real display name)
+                case "voice_join" -> {
+                    UUID channelId = UUID.fromString(node.path("channelId").asText());
+                    if (guilds.isChannelMember(user.id(), channelId)) {
+                        presence.joined("channel-" + channelId, user.id().toString(), user.displayName());
+                    }
+                }
+                case "voice_leave" -> {
+                    UUID channelId = UUID.fromString(node.path("channelId").asText());
+                    presence.left("channel-" + channelId, user.id().toString());
+                }
                 default -> { /* ignore unknown */ }
             }
         } catch (Exception e) {

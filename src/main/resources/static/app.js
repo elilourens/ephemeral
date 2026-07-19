@@ -1660,7 +1660,6 @@
         (mine || canAdmin) ? h("button", { class: "st-del", "aria-label": "Delete",
           onclick: async (e) => {
             e.stopPropagation();
-            if (isFolder && !confirm("Delete the folder '" + it.name + "' and everything inside it?")) return;
             try { await API.storageDelete(it.id); renderStorageView(c); }
             catch (err) { toast(err.message, true); }
           } }, icon("trash", 16)) : null);
@@ -3657,14 +3656,12 @@
     } catch (e) { toast(e.message, true); }
   }
   async function deleteMessage(m) {
-    if (!confirm("Delete this message?")) return;
     try { await API.deleteMsg(m.id); removeMessage(m.id); }
     catch (e) { toast(e.message, true); }
   }
 
   // ---- channels (admin) ----
   async function deleteChannel(c) {
-    if (!confirm(`Delete #${c.name}? This cannot be undone.`)) return;
     try {
       await API.deleteChannel(c.id);
       // remove locally
@@ -3712,7 +3709,6 @@
     } catch (e) { toast(e.message, true); }
   }
   async function kickMember(m) {
-    if (!confirm(`Kick ${m.displayName || m.username}?`)) return;
     try {
       await API.kick(state.currentGuild.id, m.userId);
       state.members = state.members.filter((x) => x.userId !== m.userId);

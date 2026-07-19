@@ -87,18 +87,36 @@ public class SearchService {
         sql.append(" limit :lim offset :off");
         p.addValue("lim", lim).addValue("off", off);
 
-        return jdbc.query(sql.toString(), p, (rs, i) -> {
-            UUID id = rs.getObject("id", UUID.class);
-            String dn = rs.getString("display_name");
-            String un = rs.getString("username");
-            return new SearchHitDto(id,
-                    rs.getObject("channel_id", UUID.class),
-                    rs.getString("channel_name"),
-                    rs.getObject("guild_id", UUID.class),
-                    rs.getObject("author_id", UUID.class),
-                    dn != null && !dn.isBlank() ? dn : un,
-                    crypto.decrypt(rs.getString("content")),
-                    Ids.timestampOf(id));
-        });
+        return jdbc.query(sql.toString(), p, this::hit);
+    }
+
+    /** Inbox: every message that @mentioned the viewer (bounded by retention). */
+    public List<SearchHitDto> recentMentions(UUID viewerId, int limit) {
+        return jdbc.query("""
+                select m.id, m.channel_id, c.name as channel_name, c.guild_id,
+                       m.author_id, u.username, u.display_name, m.content
+                from message_mention mm
+                join messages m on m.id = mm.message_id
+                join channels c on c.id = m.channel_id
+                join memberships mem on mem.guild_id = c.guild_id and mem.user_id = :me
+                join users u on u.id = m.author_id
+                where mm.user_id = :me and (c.admin_only = false or mem.role = 'admin')
+                order by m.id desc limit :lim
+                """, new MapSqlParameterSource().addValue("me", viewerId)
+                .addValue("lim", Math.max(1, Math.min(limit, 50))), this::hit);
+    }
+
+    private SearchHitDto hit(java.sql.ResultSet rs, int i) throws java.sql.SQLException {
+        UUID id = rs.getObject("id", UUID.class);
+        String dn = rs.getString("display_name");
+        String un = rs.getString("username");
+        return new SearchHitDto(id,
+                rs.getObject("channel_id", UUID.class),
+                rs.getString("channel_name"),
+                rs.getObject("guild_id", UUID.class),
+                rs.getObject("author_id", UUID.class),
+                dn != null && !dn.isBlank() ? dn : un,
+                crypto.decrypt(rs.getString("content")),
+                Ids.timestampOf(id));
     }
 }

@@ -805,6 +805,29 @@ class EphemeralE2ETest {
     }
 
     @Test
+    void mentionsInboxListsMyPings() throws Exception {
+        Session admin = register(uniqueName());
+        Session bob = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Inbox"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID chan = channelOfType(guild, "text");
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+
+        call("POST", "/api/channels/" + chan + "/messages", admin.token(),
+                Map.of("content", "hey <@" + bob.userId() + "> look at this"), 200);
+        call("POST", "/api/channels/" + chan + "/messages", admin.token(),
+                Map.of("content", "no ping here"), 200);
+
+        JsonNode inbox = call("GET", "/api/mentions", bob.token(), null, 200);
+        assertThat(inbox).hasSize(1);
+        assertThat(inbox.get(0).get("content").asText()).contains("look at this"); // decrypted
+        // admin has no mentions; a kicked user's inbox goes dark
+        assertThat(call("GET", "/api/mentions", admin.token(), null, 200)).isEmpty();
+        call("DELETE", "/api/guilds/" + gid + "/members/" + bob.userId(), admin.token(), null, 204);
+        assertThat(call("GET", "/api/mentions", bob.token(), null, 200)).isEmpty();
+    }
+
+    @Test
     void everythingIsEncryptedAtRest() throws Exception {
         Session s = register(uniqueName());
         JsonNode guild = call("POST", "/api/guilds", s.token(), Map.of("name", "Vault"), 200);

@@ -494,6 +494,7 @@
       api(`/api/channels/${cid}/messages`, { method: "POST", body: { content, attachmentIds, replyToId } }),
     editMsg: (id, content) => api(`/api/messages/${id}`, { method: "PATCH", body: { content } }),
     msgHistory: (id) => api(`/api/messages/${id}/history`),
+    mentions: () => api(`/api/mentions`),
     saveMsg: (id) => api(`/api/messages/${id}/save`, { method: "POST" }),
     unsaveMsg: (id) => api(`/api/messages/${id}/save`, { method: "DELETE" }),
     deleteMsg: (id) => api(`/api/messages/${id}`, { method: "DELETE" }),
@@ -4263,6 +4264,35 @@
     if (prefill) run();
   }
 
+  // ---- mentions inbox: every @mention of me across servers, newest first ----
+  async function openMentionsInbox() {
+    const results = h("div", { class: "search-results" });
+    results.appendChild(h("div", { class: "search-hint", text: "Loading…" }));
+    modal({
+      title: "Recent Mentions",
+      subtitle: "Everyone who @mentioned you — as far back as messages live.",
+      body: [results],
+      footer: [h("button", { class: "btn btn-secondary", text: "Close", onclick: closeModal })],
+    });
+    let hits;
+    try { hits = await API.mentions(); } catch (e) {
+      results.innerHTML = ""; results.appendChild(h("div", { class: "search-hint", text: e.message })); return;
+    }
+    results.innerHTML = "";
+    if (!hits.length) { results.appendChild(h("div", { class: "search-hint", text: "Nobody has mentioned you (yet)." })); return; }
+    for (const hmsg of hits) {
+      results.appendChild(h("div", { class: "search-hit", onclick: () => { closeModal(); jumpToSearchHit(hmsg); } },
+        h("div", { class: "sh-head" },
+          avatar(hmsg.authorName, hmsg.authorId, "sm", hmsg.authorId),
+          h("span", { class: "sh-author", text: hmsg.authorName }),
+          h("span", { class: "sh-chan", text: "#" + (hmsg.channelName || "") }),
+          h("span", { class: "sh-time", text: relativeTime(hmsg.createdAt) })),
+        h("div", { class: "sh-content", text: hmsg.content || "" }),
+        h("button", { class: "sh-jump", text: "Jump", onclick: (e) => { e.stopPropagation(); closeModal(); jumpToSearchHit(hmsg); } })
+      ));
+    }
+  }
+
   // Jump to a search result: switch guild/channel if needed, then flash it.
   async function jumpToSearchHit(hit) {
     if (state.currentGuild && state.currentGuild.id === hit.guildId
@@ -4645,9 +4675,11 @@
     input.addEventListener("blur", () => setTimeout(() => { closeMention(); closeEmojiAuto(); }, 150));
     $("send-btn").addEventListener("click", sendMessage);
 
-    // message search
+    // message search + mentions inbox
     const searchBtn = $("search-btn");
     if (searchBtn) searchBtn.addEventListener("click", () => openSearch());
+    const inboxBtn = $("inbox-btn");
+    if (inboxBtn) inboxBtn.addEventListener("click", openMentionsInbox);
 
     // voice message recording
     const micBtn = $("mic-btn");

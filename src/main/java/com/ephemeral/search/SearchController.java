@@ -31,4 +31,11 @@ public class SearchController {
                                      @RequestParam(defaultValue = "0") int offset) {
         return search.search(user.id(), q, guildId, channelId, authorId, has, sort, limit, offset);
     }
+
+    /** Mentions inbox: every message that @mentioned me, newest first. */
+    @GetMapping("/api/mentions")
+    public List<SearchHitDto> mentions(@CurrentUser AuthUser user,
+                                       @RequestParam(defaultValue = "50") int limit) {
+        return search.recentMentions(user.id(), limit);
+    }
 }

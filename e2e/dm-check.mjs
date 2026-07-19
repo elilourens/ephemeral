@@ -30,7 +30,8 @@ await bob.click(".guild-icon.dm-home");
 await bob.waitForTimeout(400);
 await bob.click("button[aria-label='New DM']");
 await bob.fill(".modal input.text-input", "alice" + suffix);
-await bob.press(".modal input.text-input", "Enter");
+await bob.press(".modal input.text-input", "Enter"); // adds the chip
+await bob.locator(".modal .btn", { hasText: "Start" }).click();
 await bob.waitForSelector("#composer-input", { timeout: 8000 });
 check("bob opened DM with alice", true);
 

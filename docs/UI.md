@@ -16,7 +16,9 @@ vivid backdrop; the reading surface stays calm and high-contrast.
    so text is legible even before the blur lands, plus a faint text-shadow.
 3. **One spacing scale.** 4 / 8 / 12 / 16 / 24 / 32 px. Space *around* a group is
    larger than space *within* it, so the eye can parse structure.
-4. **Consistent radii & one accent.** Azure `#57a9ff`. Rounded 12–20px on panels.
+4. **One accent, zero curves.** Azure `#57a9ff` stays the only accent. As of the
+   all-glass redesign every corner is SQUARE — a universal `border-radius: 0
+   !important` kill-switch ends style.css; delete that block to restore curves.
 5. **Motion is subtle and opt-out.** A slow backdrop drift + short 90–150ms
    transitions; everything collapses under `prefers-reduced-motion` and
    `prefers-reduced-transparency`.
@@ -24,10 +26,11 @@ vivid backdrop; the reading surface stays calm and high-contrast.
 
 ## The glass recipe
 
-- **Backdrop** (`#glass-bg`): a 5-stop radial mesh, slowly drifting — this is
-  what the glass refracts. The default is the **light** palette: soft pastel
-  blue / cyan / periwinkle / mint on white, with dark slate text on the frosted
-  white panels.
+- **Backdrop** (`#glass-bg`): a deep steel-blue sky gradient + a muted drifting
+  mesh + three procedural cumulus clouds. This is what the glass refracts. As of
+  the all-glass redesign EVERY pane (including the reading surface) is
+  low-opacity frost (26–44% white + 28–34px blur), so the sky and clouds move
+  through the whole interface; heavier blur is what keeps small text legible.
 - **Refraction filter** (`#glass-refract` in `index.html`): `feTurbulence`
   (fractal noise) → `feGaussianBlur` → `feDisplacementMap`. Size-independent, so
   it applies to any control without per-element maps.

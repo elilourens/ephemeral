@@ -867,6 +867,37 @@ class EphemeralE2ETest {
     }
 
     @Test
+    void orphanSweepRefusesToEraseAForeignStorageDir() throws Exception {
+        // Simulate a second instance pointed at another app's uploads: files on
+        // disk that THIS database doesn't know. The sweep must refuse (this
+        // exact misconfiguration once deleted real user data).
+        java.nio.file.Path root = storage.root();
+        java.util.List<java.nio.file.Path> ghosts = new java.util.ArrayList<>();
+        Instant old = Instant.now().minus(2, ChronoUnit.HOURS);
+        for (int i = 0; i < 12; i++) {
+            java.nio.file.Path p = root.resolve("ghost-" + UUID.randomUUID());
+            java.nio.file.Files.writeString(p, "someone else's data " + i);
+            java.nio.file.Files.setLastModifiedTime(p, java.nio.file.attribute.FileTime.from(old));
+            ghosts.add(p);
+        }
+        try {
+            // wipe rows so the DB looks like it owns nothing (fresh-instance case)
+            jdbc.update("update guilds set icon_id = null", Map.of());
+            jdbc.update("update users set avatar_id = null, banner_id = null", Map.of());
+            jdbc.update("delete from guild_emoji", Map.of());
+            jdbc.update("delete from storage_items", Map.of());
+            jdbc.update("delete from attachments", Map.of());
+            int removed = retention.reconcileOrphanBlobs(java.time.Duration.ofHours(1));
+            assertThat(removed).isZero();
+            for (java.nio.file.Path p : ghosts) {
+                assertThat(java.nio.file.Files.exists(p)).as("blob %s must survive", p).isTrue();
+            }
+        } finally {
+            for (java.nio.file.Path p : ghosts) java.nio.file.Files.deleteIfExists(p);
+        }
+    }
+
+    @Test
     void storageChannelLifecycle() throws Exception {
         Session admin = register(uniqueName());
         Session bob = register(uniqueName());

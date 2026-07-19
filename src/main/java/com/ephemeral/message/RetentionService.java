@@ -99,10 +99,21 @@ public class RetentionService {
         java.util.Set<String> referenced = new java.util.HashSet<>(
                 jdbc.queryForList("select storage_key from attachments", Map.of(), String.class));
         Instant cutoff = Instant.now().minus(grace);
-        java.util.List<String> orphans = storage.listStoredKeys().stream()
+        java.util.List<String> disk = storage.listStoredKeys();
+        java.util.List<String> orphans = disk.stream()
                 .filter(k -> !referenced.contains(k))
                 .filter(k -> storage.lastModified(k).isBefore(cutoff))
                 .toList();
+        // SAFETY: an empty attachments table with files on disk, or a sweep that
+        // would erase most of the store, means this database does NOT own that
+        // directory (e.g. a second instance pointed at the same STORAGE_DIR).
+        // Refuse to mass-delete — this exact misconfiguration once ate real data.
+        if (!orphans.isEmpty()
+                && (referenced.isEmpty() || (disk.size() >= 10 && orphans.size() * 2 > disk.size()))) {
+            log.warn("orphan sweep SKIPPED: {} of {} blobs look orphaned — storage dir "
+                    + "likely shared with another instance or wrong database", orphans.size(), disk.size());
+            return 0;
+        }
         storage.deleteAll(orphans);
         if (!orphans.isEmpty()) {
             log.info("reconciled {} orphan blob(s) with no message", orphans.size());

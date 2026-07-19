@@ -67,9 +67,9 @@
   --z-sticky: 10; --z-dropdown: 100; --z-overlay: 200; --z-modal: 300; --z-toast: 400;
 
   /* fonts */
-  --font-body: "Geist", "Noto Emoji", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: "Instrument Serif", Georgia, serif;
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, "Noto Emoji", monospace;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   --shadow-1: 0 2px 8px rgba(0,0,0,.30);
   --shadow-2: 0 10px 34px -6px rgba(0,0,0,.50);

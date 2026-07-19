@@ -1,0 +1,126 @@
+/* =====================================================================
+   LIQUID GLASS EXPERIMENT — Apple's "Adopting Liquid Glass" guide mapped
+   to the web UI. Loaded AFTER style.css as a pure override layer.
+
+   The guide's rules, translated:
+   1. Glass is the TOPMOST FUNCTIONAL LAYER (nav, bars, controls) — not the
+      content. The reading surface goes calm and near-opaque.
+   2. Navigation floats as detached capsules; content extends beneath bars
+      (scroll-edge fade) so it "peeks through" the glass.
+   3. Rounder, concentric corners; controls gel on press; icons over text.
+   4. Judicious color; legibility first; reduce-transparency fallbacks.
+   ===================================================================== */
+
+:root {
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 22px;
+  --lg-capsule: 28px;
+}
+
+/* ---- 1. content layer: calm, bright, (nearly) opaque ---- */
+#content {
+  background: rgba(255, 255, 255, .93);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-radius: var(--lg-capsule);
+  border: 1px solid rgba(255, 255, 255, .85);
+}
+
+/* ---- 2. chrome floats: rail as a detached glass capsule ---- */
+.guild-rail {
+  border-radius: 38px;
+  background: rgba(255, 255, 255, .38);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, .75);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .9),
+    inset 0 -1px 0 rgba(120, 150, 200, .12),
+    0 18px 40px rgba(30, 60, 120, .14);
+}
+.guild-icon { border-radius: 42%; transition: border-radius .28s cubic-bezier(.34,1.56,.64,1), transform .18s cubic-bezier(.34,1.56,.64,1), background .18s; }
+.guild-icon:hover { transform: scale(1.06); }
+.guild-icon:active { transform: scale(.93); }
+
+/* sidebar + member list: lighter glass so the clouds extend beneath */
+.sidebar, .member-column {
+  background: rgba(255, 255, 255, .42);
+  -webkit-backdrop-filter: blur(26px) saturate(170%);
+  backdrop-filter: blur(26px) saturate(170%);
+  border-radius: var(--lg-capsule);
+  border: 1px solid rgba(255, 255, 255, .7);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85), 0 18px 40px rgba(30, 60, 120, .12);
+}
+
+/* ---- 3. bars become floating capsules over the content ---- */
+.content-header {
+  margin: 10px 14px 0;
+  border-radius: var(--lg-capsule);
+  background: rgba(255, 255, 255, .55);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+  backdrop-filter: blur(18px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, .8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 8px 24px rgba(30, 60, 120, .10);
+}
+.composer-wrap { padding: 0 14px 14px; }
+.composer {
+  border-radius: var(--lg-capsule);
+  background: rgba(255, 255, 255, .6);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+  backdrop-filter: blur(18px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, .85);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 10px 28px rgba(30, 60, 120, .12);
+}
+
+/* content extends beneath the bars: scroll-edge fade */
+.message-scroll {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26px, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 26px, #000 calc(100% - 22px), transparent 100%);
+}
+
+/* ---- 4. controls: capsules that gel on press ---- */
+button, .btn, .header-icon-btn, .icon-btn, .vc-btn, .ch-call {
+  transition: transform .16s cubic-bezier(.34,1.56,.64,1), background .15s, color .15s, box-shadow .2s;
+}
+button:active, .btn:active { transform: scale(.94); }
+.btn { border-radius: 999px; }
+.header-icon-btn, .icon-btn { border-radius: 999px; }
+.text-input { border-radius: 16px; }
+.vc-btn { border-radius: 999px; }
+
+/* menus, popovers, modals: real refraction on the small floating glass */
+.context-menu, .modal, .mention-pop, .profile-card, .emoji-pop {
+  border-radius: var(--r-lg);
+  background: rgba(255, 255, 255, .58);
+  -webkit-backdrop-filter: blur(26px) saturate(185%);
+  backdrop-filter: blur(26px) saturate(185%) url(#glass-refract);
+  border: 1px solid rgba(255, 255, 255, .85);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 24px 60px rgba(30, 60, 120, .22);
+}
+.modal { background: rgba(255, 255, 255, .72); }
+
+/* hover toolbar + reaction pills: mini capsules */
+.msg-actions { border-radius: 999px; overflow: hidden; }
+.reaction { border-radius: 999px; }
+
+/* voice tiles: rounder, concentric with the content radius */
+.tile { border-radius: var(--r-lg); }
+
+/* ---- clouds get a touch more presence behind the lighter chrome ---- */
+.bg-cloud.c1 { opacity: 1; }
+.bg-cloud.c2 { opacity: .75; }
+.bg-cloud.c3 { opacity: .55; }
+
+/* ---- accessibility fallbacks (the guide is explicit about these) ---- */
+@media (prefers-reduced-transparency: reduce) {
+  #content, .guild-rail, .sidebar, .member-column, .content-header, .composer,
+  .context-menu, .modal, .mention-pop, .profile-card, .emoji-pop {
+    background: #fbfdff;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  button, .btn, .guild-icon { transition: none; }
+}

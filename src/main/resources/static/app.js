@@ -1044,11 +1044,12 @@
     });
     const body = [tabbar, ...panels];
 
-    const { backdrop } = modal({
+    const { backdrop, root } = modal({
       title: "Voice & Video Settings",
       body,
       footer: [h("button", { class: "btn", text: "Done", onclick: closeModal })],
     });
+    root.classList.add("settings-modal");
 
     async function startMeter(deviceId) {
       // In a call: meter the ACTUAL published mic track (post-processing) rather

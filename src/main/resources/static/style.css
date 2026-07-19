@@ -1794,3 +1794,56 @@ button:active, .btn:active { transform: scale(.94); }
   border: 1px solid rgba(255, 255, 255, .13);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .11), 0 18px 40px rgba(8, 14, 26, .32);
 }
+
+/* ==================== SETTINGS MODAL + SMOKE CONTROLS ===================
+   Bigger settings surface, iOS segmented tabs, breathing room — and every
+   formerly-azure button becomes the smoke white-alpha pill. */
+.modal.settings-modal { max-width: 720px; }
+.settings-modal .modal-body { max-height: 74vh; padding: 18px 26px 24px; gap: 18px; }
+.settings-modal .modal-header { padding: 24px 26px 0; }
+
+/* tabs: a full-width segmented smoke pill, not underlines on a strip */
+.set-tabs {
+  position: static; margin: 0 0 6px; padding: 4px;
+  display: flex; gap: 4px; flex-wrap: nowrap;
+  background: rgba(255, 255, 255, .1);
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-bottom: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 999px;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+.set-tab {
+  flex: 1; text-align: center; padding: 9px 12px;
+  border-radius: 999px; border-bottom: none; margin-bottom: 0;
+  font-size: 14px; font-weight: 600; color: var(--text-muted);
+  white-space: nowrap;
+}
+.set-tab:hover { color: var(--text); background: rgba(255, 255, 255, .1); }
+.set-tab.active { color: #fff; background: rgba(255, 255, 255, .28); border-bottom: none; }
+
+/* rows: clear rhythm, labels and controls breathing */
+.set-tabpanel { gap: 20px; padding-top: 6px; }
+.set-row { gap: 8px; }
+.set-row.set-toggle { padding: 2px 0; gap: 24px; }
+.set-row select.text-input { padding: 10px 12px; }
+.set-label .set-sub { margin-top: 3px; line-height: 1.45; }
+
+/* every light-blue button goes smoke (iOS pill), white text/glyphs */
+.btn { background: rgba(255, 255, 255, .24); color: #fff; border: 1px solid rgba(255, 255, 255, .32); }
+.btn:hover { background: rgba(255, 255, 255, .34); }
+.btn.btn-secondary { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .22); }
+.btn.btn-secondary:hover { background: rgba(255, 255, 255, .18); }
+.btn.danger { background: rgba(224, 82, 82, .38); border-color: rgba(255, 140, 140, .45); }
+.seg button.active { background: rgba(255, 255, 255, .3); color: #fff; }
+.switch input:checked + .slider { background: rgba(255, 255, 255, .5); }
+.switch input:checked + .slider::before { background: #fff; }
+.vm-play { background: rgba(255, 255, 255, .26); color: #fff; }
+.vm-play:hover { background: rgba(255, 255, 255, .36); }
+.header-icon-btn.active { color: #fff; background: rgba(255, 255, 255, .22); }
+.composer #send-btn { color: var(--text); }
+.guild-slot.active .guild-icon, .guild-icon:hover { background: rgba(255, 255, 255, .3); color: #fff; }
+.guild-icon.action:hover { background: rgba(255, 255, 255, .3); color: #fff; }
+
+/* composer: one shared centerline for attach / text / mic / gif / emoji / send */
+.composer { align-items: center; }
+.composer textarea { padding: 9px 12px; }

@@ -254,10 +254,10 @@ Everything whose only justification is decentralization or multi-node scale:
 
 - **Federation** — server-to-server replication, DAG/event graph, state resolution,
   room versions. Replaced by one ordered table.
-- **End-to-end encryption** — beyond the implementation cost, E2EE *fights* our
-  requirements: it breaks server-side search, moderation, and reliable deletion (the
-  last is fatal for an auto-delete product). TLS in transit + server-side authz is
-  the correct trade-off for a trusted, self-hosted app.
+- **End-to-end encryption** — E2EE *fights* our requirements: it breaks server-side
+  search, moderation, and reliable deletion (the last is fatal for an auto-delete
+  product). Instead we ship **encryption at rest** (AES-256-GCM, see §21) plus
+  TLS/WireGuard in transit — the right trade-off for a trusted, self-hosted app.
 - **Microservices / message bus (Redis, RabbitMQ, NATS), MongoDB.**
 - **Discord API compatibility**, snowflake IDs, permission bitfields, granular
   per-channel retention policies, embed/GIF/push side-services.
@@ -660,3 +660,44 @@ settings persistence across reload, account-delete confirm flow), `voice-state` 
 two-client call: speaking ring, mute/deafen/screen propagation to tiles + sidebar),
 `features-e2e` 24/24 (adds the inline-markdown guard). All prior suites still green; server
 log clean.
+
+---
+
+## 21. Privacy hardening: encryption at rest + deploy story
+
+The product's promise is privacy-through-disappearance; this wave makes the
+*stored* data match it.
+
+**Encryption at rest (AES-256-GCM, app-side — `crypto/CryptoService`):**
+- `messages.content` is stored as `enc:v1:base64(iv‖ct)`; uploaded blobs as
+  `EPHC‖iv‖ct` streams. Key = `ENCRYPTION_KEY` (base64 32 B) or, when unset,
+  derived from the JWT secret with a startup warning. Failed decrypts (rotated
+  key) degrade to a 🔒 marker, never a 500. Legacy plaintext rows/files pass
+  through and age out with retention.
+- **Search survives encryption**: `content_tsv` stopped being a generated column
+  (V9) — the app computes it from plaintext in the same INSERT/UPDATE, so the
+  index holds word *stems* only; `has:link` reads a new `has_link` flag instead
+  of regexing (now-encrypted) content. `SEARCH_INDEX=false` keeps no index at all.
+- **Save semantics tightened (privacy rule):** only the *author* may save —
+  i.e. exempt from deletion — their own message. Nobody else can make your
+  words permanent.
+- Explicitly **not E2EE** (see §12): the host can read messages; at-rest crypto
+  protects against stolen disks/backups/dumps. Voice media was already
+  SRTP/DTLS-encrypted by WebRTC design.
+
+**Deploy story (dogfooding-ready):**
+- `.env.example` + hardened compose: secrets from `.env`, `restart:
+  unless-stopped`, app healthcheck (bash `/dev/tcp` — the JRE image has no
+  curl), LiveKit config injected via `LIVEKIT_CONFIG` env so its keys live in
+  `.env` too, graceful shutdown.
+- **TLS profile**: `docker compose --profile tls up` adds Caddy fronting the
+  app *and* LiveKit signaling (`/rtc`) on one auto-certified domain.
+- `DEPLOY.md`: Tailscale (recommended — WireGuard transit, zero certs) / VPS +
+  Caddy / LAN recipes, day-2 ops, threat-model table, dogfooding checklist.
+
+**UI:** the custom dark-chip tooltip engine and all native `title` bubbles were
+removed (labels live on as `aria-label`s).
+
+**Verified:** 35/35 JUnit — adds `everythingIsEncryptedAtRest` (ciphertext in
+DB + on disk with correct Content-Length, plaintext over API, FTS + `has:link`
+still work, legacy plaintext passthrough) and the author-only save rule.

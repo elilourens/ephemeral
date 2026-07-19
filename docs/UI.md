@@ -43,3 +43,12 @@ vivid backdrop; the reading surface stays calm and high-contrast.
 Rendered with Playwright (Chromium) at 1440×900 across auth, chat, voice, member
 list, modals, and popovers; checked with: zoom to 50% (hierarchy), squint
 (what stands out), tab order (focus), contrast sampling. Ship the best result.
+
+## The clouds
+
+Procedural cumulus clouds (stacked radial-gradient puffs — dense white cores,
+one broad bright base, a grey-blue shaded underside — under an 8px blur) drift
+across the sky backdrop at three depths/speeds behind every glass panel. They
+echo the product idea: like the messages, they pass. Pure CSS, no image assets;
+`prefers-reduced-motion` pauses them mid-sky (negative animation delays mean
+they never pop in from the edge).

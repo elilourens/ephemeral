@@ -1388,6 +1388,32 @@ body { background: #eaf0fb; color: var(--text); }
   to   { transform: translate3d(1.6%,1.6%,0)  scale(1.10); }
 }
 
+/* ---- cumulus clouds: stacked soft puffs (bright turrets, flatter base)
+       drifting across the sky at three depths, behind every glass panel ---- */
+.bg-cloud {
+  position: absolute; left: 0; pointer-events: none;
+  background:
+    /* cauliflower turrets: dense white cores that fade fast (like stacked puffs) */
+    radial-gradient(circle at 50% 26%, #fff 16%, rgba(255,255,255,0) 40%),
+    radial-gradient(circle at 33% 42%, #fff 14%, rgba(255,255,255,0) 36%),
+    radial-gradient(circle at 67% 44%, rgba(252,254,255,.98) 13%, rgba(255,255,255,0) 34%),
+    radial-gradient(circle at 18% 58%, rgba(247,251,255,.96) 11%, rgba(255,255,255,0) 30%),
+    radial-gradient(circle at 83% 60%, rgba(247,251,255,.96) 11%, rgba(255,255,255,0) 30%),
+    /* broad bright base */
+    radial-gradient(ellipse 60% 28% at 50% 68%, #fff 34%, rgba(255,255,255,0) 70%),
+    /* shaded underside (the photo's grey-blue belly) */
+    radial-gradient(ellipse 52% 16% at 50% 84%, rgba(170,190,215,.45) 22%, rgba(170,190,215,0) 72%);
+  filter: blur(8px);
+  animation: cloud-drift linear infinite;
+}
+.bg-cloud.c1 { top: 4%;  width: 680px; height: 280px; opacity: .95; animation-duration: 360s; animation-delay: -90s; }
+.bg-cloud.c2 { top: 38%; width: 460px; height: 190px; opacity: .65; animation-duration: 480s; animation-delay: -300s; }
+.bg-cloud.c3 { top: 66%; width: 320px; height: 130px; opacity: .45; animation-duration: 600s; animation-delay: -480s; }
+@keyframes cloud-drift {
+  from { transform: translateX(-720px); }
+  to   { transform: translateX(calc(100vw + 720px)); }
+}
+
 /* ---- floating-panel layout ---- */
 .app-shell {
   background: transparent; gap: 10px; padding: 10px;
@@ -1515,7 +1541,10 @@ body { background: #eaf0fb; color: var(--text); }
     -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(255,255,255,.98) !important;
   }
 }
-@media (prefers-reduced-motion: reduce) { #glass-bg::before { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  #glass-bg::before { animation: none; }
+  .bg-cloud { animation-play-state: paused; } /* negative delays leave them mid-sky */
+}
 
 /* don't pad the floating layout on phones (panels go edge-to-edge) */
 @media (max-width: 640px) {

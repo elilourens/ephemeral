@@ -31,7 +31,12 @@
      softened, then used to warp the backdrop behind any frosted control.
      Chromium renders it as backdrop-filter: url(#glass-refract); Safari and
      Firefox ignore the url() and keep the blur fallback. ================= -->
-<div id="glass-bg" aria-hidden="true"></div>
+<div id="glass-bg" aria-hidden="true">
+  <!-- procedural cumulus clouds drifting under the glass — like the messages, they pass -->
+  <div class="bg-cloud c1"></div>
+  <div class="bg-cloud c2"></div>
+  <div class="bg-cloud c3"></div>
+</div>
 <svg id="glass-defs" width="0" height="0" aria-hidden="true" focusable="false"
      style="position:absolute;width:0;height:0;overflow:hidden;pointer-events:none">
   <filter id="glass-refract" x="-25%" y="-25%" width="150%" height="150%"

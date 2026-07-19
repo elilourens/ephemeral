@@ -26,11 +26,13 @@ vivid backdrop; the reading surface stays calm and high-contrast.
 
 ## The glass recipe
 
-- **Backdrop** (`#glass-bg`): a deep steel-blue sky gradient + a muted drifting
-  mesh + three procedural cumulus clouds. This is what the glass refracts. As of
-  the all-glass redesign EVERY pane (including the reading surface) is
-  low-opacity frost (26–44% white + 28–34px blur), so the sky and clouds move
-  through the whole interface; heavier blur is what keeps small text legible.
+- **Backdrop** (`#glass-bg`): a DARK storm sky (charcoal-to-grey gradient) with
+  three big grey cumulus clouds (pale crowns, slate bellies) drifting through.
+  Every pane — including the reading surface — is dark translucent glass
+  (rgba(44,52,64,.45-.55) + 26-30px blur) with hairline white borders and LIGHT
+  text (the "stormglass" token flip at the end of style.css). The bright-azure
+  day theme lives just above it in the cascade; delete the stormglass section
+  to get the daylight look back.
 - **Refraction filter** (`#glass-refract` in `index.html`): `feTurbulence`
   (fractal noise) → `feGaussianBlur` → `feDisplacementMap`. Size-independent, so
   it applies to any control without per-element maps.

@@ -1703,3 +1703,102 @@ button:active, .btn:active { transform: scale(.94); }
    !important is deliberate — it must beat every specific radius rule.
    Delete this block to bring the curves back. */
 * , *::before, *::after { border-radius: 0 !important; }
+
+/* ============================ STORMGLASS ================================
+   The reference look: a dark photographic storm sky; every pane is faint
+   white-tinted glass (8-14% white + heavy blur) carrying LIGHT text. Token
+   flip first — components consume var(--*) — then the pane surfaces. */
+:root {
+  --bg-0: #2b323d; --bg-1: #303845; --bg-2: #363f4d; --bg-3: #414b5a;
+  --hover: rgba(255,255,255,.07); --active: rgba(255,255,255,.13);
+  --surface: #333c49; --surface-2: #3b4553;
+  --border: rgba(255,255,255,.14); --border-strong: rgba(255,255,255,.28);
+  --text: #f2f5f9; --text-muted: #bcc6d2; --text-faint: #939fae;
+  --text-link: #a5c8ff;
+  --accent: #7db4f7; --accent-hover: #98c4fa;
+  --accent-quiet: rgba(125,180,247,.18); --accent-line: rgba(125,180,247,.4);
+  --accent-ink: #0d1726;
+}
+
+/* the storm sky */
+#glass-bg { background: linear-gradient(to bottom, #343b46 0%, #4d5560 48%, #707986 100%); }
+#glass-bg::before {
+  background:
+    radial-gradient(44% 50% at 16% 10%, rgba(160,172,190,.20), transparent 62%),
+    radial-gradient(46% 48% at 84% 8%,  rgba(120,132,150,.16), transparent 60%),
+    radial-gradient(52% 54% at 80% 90%, rgba(180,190,205,.14), transparent 64%),
+    radial-gradient(70% 70% at 50% 50%, rgba(140,152,170,.12), transparent 78%);
+}
+/* storm clouds: pale grey crowns, deep slate bellies */
+.bg-cloud {
+  background:
+    radial-gradient(circle at 50% 26%, rgba(188,197,209,.8) 16%, rgba(188,197,209,0) 40%),
+    radial-gradient(circle at 33% 42%, rgba(174,184,197,.75) 14%, rgba(174,184,197,0) 36%),
+    radial-gradient(circle at 67% 44%, rgba(162,172,186,.7) 13%, rgba(162,172,186,0) 34%),
+    radial-gradient(circle at 18% 58%, rgba(146,156,171,.65) 11%, rgba(146,156,171,0) 30%),
+    radial-gradient(circle at 83% 60%, rgba(146,156,171,.65) 11%, rgba(146,156,171,0) 30%),
+    radial-gradient(ellipse 60% 28% at 50% 68%, rgba(132,142,158,.75) 34%, rgba(132,142,158,0) 70%),
+    radial-gradient(ellipse 52% 16% at 50% 84%, rgba(28,34,45,.6) 22%, rgba(28,34,45,0) 72%);
+  filter: blur(11px);
+}
+
+/* every pane: faint light glass over the storm */
+#content, .sidebar, .member-column {
+  background: rgba(44,52,64,.52);
+  -webkit-backdrop-filter: blur(28px) saturate(130%);
+  backdrop-filter: blur(28px) saturate(130%);
+  border: 1px solid rgba(255,255,255,.15);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.13), 0 20px 48px rgba(10,16,26,.35);
+}
+.guild-rail {
+  background: rgba(44,52,64,.45);
+  -webkit-backdrop-filter: blur(28px) saturate(130%);
+  backdrop-filter: blur(28px) saturate(130%);
+  border: 1px solid rgba(255,255,255,.15);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 18px 40px rgba(10,16,26,.35);
+}
+.content-header, .composer {
+  background: rgba(52,61,74,.55);
+  -webkit-backdrop-filter: blur(26px) saturate(130%);
+  backdrop-filter: blur(26px) saturate(130%);
+  border: 1px solid rgba(255,255,255,.17);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 10px 28px rgba(10,16,26,.3);
+}
+.context-menu, .modal, .mention-pop, .profile-card, .emoji-pop {
+  background: rgba(52,60,72,.78);
+  -webkit-backdrop-filter: blur(30px) saturate(140%);
+  backdrop-filter: blur(30px) saturate(140%);
+  border: 1px solid rgba(255,255,255,.2);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 28px 64px rgba(5,10,18,.5);
+}
+.modal-backdrop { background: rgba(10,15,24,.45); }
+
+/* raised elements + text surfaces on dark glass */
+.text-input, .composer textarea {
+  background: rgba(255,255,255,.08); color: var(--text);
+  border-color: rgba(255,255,255,.18);
+}
+.text-input::placeholder, .composer textarea::placeholder { color: var(--text-faint); }
+.md-code, .md-inline-code { background: rgba(0,0,0,.28); color: #e8edf4; border-color: rgba(255,255,255,.12); }
+.spoiler { background: rgba(0,0,0,.5); }
+.spoiler.revealed { background: rgba(255,255,255,.08); }
+.attach-file { background: rgba(255,255,255,.08); border-color: var(--border); }
+.unfurl, .embed-card, .yt-facade { background: rgba(255,255,255,.07); border-color: var(--border); }
+.toast { background: #333c49; color: var(--text); border-color: rgba(255,255,255,.2); }
+*::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); }
+.message:hover { background: rgba(255,255,255,.045); }
+
+/* reduced transparency: solid dark panes instead of glass */
+@media (prefers-reduced-transparency: reduce) {
+  #content, .guild-rail, .sidebar, .member-column, .content-header, .composer,
+  .context-menu, .modal, .mention-pop, .profile-card, .emoji-pop {
+    background: #333c49;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+/* rail action buttons + assorted light-theme leftovers on the dark glass */
+.guild-icon.action { background: rgba(255,255,255,.10); color: var(--text-muted); }
+.guild-icon.action:hover { background: var(--accent); color: var(--accent-ink); }
+.ctx-item:hover { background: rgba(255,255,255,.10); }
+.qs-item.active, .qs-item:hover { background: rgba(255,255,255,.10); }

@@ -1130,21 +1130,6 @@ button .icon { pointer-events: none; }
 .emoji-pop .mention-opt { gap: 10px; }
 .emoji-opt-em { font-size: 20px; line-height: 1; width: 24px; text-align: center; flex: none; }
 
-/* ============================ tooltips ================================= */
-.tooltip {
-  position: fixed; z-index: 500; pointer-events: none;
-  background: var(--bg-0); color: var(--text); border: 1px solid var(--border-strong, var(--border));
-  font-size: 13px; font-weight: 600; padding: 6px 10px; border-radius: var(--r-sm);
-  box-shadow: 0 6px 20px rgba(0,0,0,.5); max-width: 260px; white-space: normal; line-height: 1.35;
-  opacity: 0; transform: translateY(2px) scale(.97); transition: opacity .09s ease, transform .09s ease;
-}
-.tooltip.show { opacity: 1; transform: none; }
-.tooltip::after {
-  content: ""; position: absolute; left: 50%; margin-left: -5px; border: 5px solid transparent;
-}
-.tooltip[data-place="top"]::after { top: 100%; border-top-color: var(--bg-0); }
-.tooltip[data-place="bottom"]::after { bottom: 100%; border-bottom-color: var(--bg-0); }
-
 /* ======================= hover / focus fluidity ======================= */
 /* smooth, consistent interactions + keyboard-visible focus ring everywhere */
 button, .channel, .guild-icon, .member-row, .ctx-item, .mention-opt, .search-hit,
@@ -1190,3 +1175,289 @@ button:focus:not(:focus-visible), input:focus:not(:focus-visible), textarea:focu
 .msg-actions button { min-width: 34px; min-height: 30px; }
 /* the recording mic button turns red while recording */
 #composer-input:disabled { opacity: 1; }
+
+/* ============================ media lightbox =========================== */
+/* in-app preview overlay for image/file attachments (replaces open-in-new-tab) */
+.lightbox {
+  position: fixed; inset: 0; z-index: var(--z-modal, 300);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; padding: 56px 24px 24px;
+  background: rgba(6,10,18,.82);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  animation: lbin .14s ease;
+}
+@keyframes lbin { from { opacity: 0; } to { opacity: 1; } }
+.lb-stage { display: flex; align-items: center; justify-content: center; max-width: min(1180px, 94vw); max-height: 82vh; min-height: 0; }
+.lb-img, .lb-video {
+  max-width: min(1180px, 94vw); max-height: 82vh; display: block;
+  border-radius: 14px; background: #000; box-shadow: 0 30px 80px rgba(0,0,0,.6); object-fit: contain;
+}
+.lb-frame {
+  width: min(1000px, 94vw); height: 82vh; border: 0; border-radius: 14px; background: #fff;
+  box-shadow: 0 30px 80px rgba(0,0,0,.6);
+}
+.lb-text {
+  max-width: min(940px, 94vw); max-height: 82vh; overflow: auto; margin: 0;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  padding: 16px 18px; color: var(--text); font: 13px/1.55 var(--font-mono);
+  white-space: pre-wrap; word-break: break-word; box-shadow: var(--shadow-2);
+}
+.lb-card {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  min-width: 280px; max-width: 92vw; padding: 30px 34px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: var(--shadow-2); color: var(--text); text-align: center;
+}
+.lb-card .file-icon { color: var(--accent); }
+.lb-card audio { width: min(360px, 80vw); margin-top: 4px; }
+.lb-cardname { font-weight: 600; word-break: break-word; }
+.lb-cardsub { font-size: 13px; color: var(--text-faint); }
+.lb-bar { display: flex; align-items: center; gap: 12px; margin-top: 4px; max-width: 94vw; flex-wrap: wrap; justify-content: center; color: #fff; }
+.lb-bar .lb-name { font-weight: 600; max-width: 44vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-bar .lb-size { color: rgba(255,255,255,.6); font-size: 13px; }
+.lb-act {
+  display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 10px;
+  background: rgba(255,255,255,.14); color: #fff; font-weight: 600; font-size: 14px;
+}
+.lb-act:hover { background: rgba(255,255,255,.24); }
+.lb-act.primary { background: var(--accent); color: var(--accent-ink); }
+.lb-act.primary:hover { background: var(--accent-hover); }
+.lb-close {
+  position: fixed; top: 14px; right: 16px; width: 42px; height: 42px; border-radius: 50%;
+  display: grid; place-items: center; background: rgba(255,255,255,.14); color: #fff;
+}
+.lb-close:hover { background: rgba(255,255,255,.26); }
+@media (prefers-reduced-motion: reduce) { .lightbox { animation: none; } }
+
+/* ===================== settings modal: tabbed sections ================= */
+.set-tabs {
+  position: sticky; top: -16px; z-index: 2;
+  display: flex; gap: 4px; flex-wrap: wrap;
+  margin: -16px -22px 12px; padding: 12px 22px 0;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  -webkit-backdrop-filter: blur(12px) saturate(180%); backdrop-filter: blur(12px) saturate(180%);
+}
+.set-tab {
+  padding: 8px 14px 10px; font-size: 14px; font-weight: 600; color: var(--text-muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px; border-radius: 8px 8px 0 0;
+}
+.set-tab:hover { color: var(--text); background: var(--hover); }
+.set-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.set-tabpanel { display: flex; flex-direction: column; gap: 12px; }
+
+/* reply-preview: a small avatar next to the replied-to name (consistency) */
+.reply-preview .avatar { width: 16px; height: 16px; font-size: 8px; flex: none; }
+
+/* context-menu non-interactive info row (e.g. the vanish countdown) */
+.ctx-info { display: flex; align-items: center; gap: 8px; padding: 7px 9px 4px; font-size: 12.5px; color: var(--text-faint); }
+.ctx-info .icon { color: var(--text-faint); flex: none; }
+
+/* ============================ direct messages ========================= */
+.dm-row { gap: 8px; }
+.dm-row .avatar { width: 26px; height: 26px; font-size: 10px; }
+.dm-row .name { font-weight: 500; }
+.dm-row .dm-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dnd); flex: none; margin-left: auto; }
+.dm-empty { padding: 14px 12px; color: var(--text-faint); font-size: 13px; line-height: 1.5; }
+/* DM chat / call header: avatar + name + call buttons */
+#chat-channel-name .avatar, #voice-channel-name .avatar { width: 24px; height: 24px; font-size: 10px; margin-right: 4px; }
+.ch-call { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; margin-left: 4px; border-radius: var(--r-sm); color: var(--text-muted); }
+.ch-call:hover { color: var(--accent); background: var(--hover); }
+
+/* =========================================================================
+   ★ LIQUID GLASS — LIGHT (blue & white) — default theme
+   Apple "Liquid Glass" light mode: frosted WHITE glass panels floating over a
+   soft pastel-blue backdrop, with real refraction on floating controls
+   (url(#glass-refract), Chromium; blur fallback elsewhere). Dark slate text on
+   white keeps WCAG-AA contrast. Honors reduced-transparency / reduced-motion.
+   See docs/UI.md.
+   ========================================================================= */
+:root {
+  /* text — slate ramp, WCAG-AA on the white glass below */
+  --text:       #0f172a;   /* slate-900 */
+  --text-muted: #475569;   /* slate-600 ~7:1  */
+  --text-faint: #64748b;   /* slate-500 ~4.7:1 */
+  --text-link:  #1a6ae0;
+
+  /* accent — clean blue */
+  --accent:       #2f80ff;
+  --accent-hover: #5b9bff;
+  --accent-quiet: rgba(47,128,255,.12);
+  --accent-line:  rgba(47,128,255,.38);
+  --accent-ink:   #ffffff;
+
+  /* surfaces — mostly translucent white; solid aliases for odd spots */
+  --bg-0: #eef2f9; --bg-1: #f2f5fb; --bg-2: #f6f8fc; --bg-3: rgba(255,255,255,.70);
+  --surface: rgba(255,255,255,.74); --surface-2: rgba(15,23,42,.04);
+  --hover:  rgba(15,23,42,.05);
+  --active: rgba(47,128,255,.12);
+  --border:        rgba(15,23,42,.10);
+  --border-strong: rgba(15,23,42,.18);
+
+  /* presence / semantic — tuned for a light backdrop */
+  --online:#16a34a; --idle:#d97706; --dnd:#e11d48; --offline:#94a3b8;
+  --danger:#e11d48; --danger-quiet:rgba(225,29,72,.12); --green:#16a34a;
+
+  /* glass material knobs */
+  --glass-blur: 22px;
+  --glass-sat: 180%;
+  --glass-tint:  rgba(255,255,255,.60);     /* large panels */
+  --glass-float: rgba(255,255,255,.74);     /* floating menus / modals */
+  --glass-hi: inset 0 1px 0 rgba(255,255,255,.75), inset 0 0 0 1px rgba(255,255,255,.35);
+  --shadow-1: 0 4px 16px rgba(31,54,99,.10);
+  --shadow-2: 0 26px 60px -18px rgba(31,54,99,.24);
+}
+
+/* ---- backdrop: the soft pastel-blue mesh the glass refracts ---- */
+body { background: #eaf0fb; color: var(--text); }
+#glass-bg { position: fixed; inset: 0; z-index: -1; overflow: hidden; background: #eaf0fb; }
+#glass-bg::before {
+  content: ""; position: absolute; inset: -12%;
+  background:
+    radial-gradient(40% 46% at 12% 14%, hsla(214,100%,84%,.78), transparent 60%),
+    radial-gradient(42% 44% at 88% 10%, hsla(196,100%,86%,.68), transparent 60%),
+    radial-gradient(46% 48% at 84% 86%, hsla(230,100%,90%,.72), transparent 62%),
+    radial-gradient(44% 48% at 14% 88%, hsla(180,80%,88%,.60), transparent 60%),
+    radial-gradient(66% 66% at 50% 50%, hsla(210,70%,99%,.65), transparent 76%);
+  filter: saturate(106%);
+  animation: bgdrift 38s ease-in-out infinite alternate;
+}
+@keyframes bgdrift {
+  from { transform: translate3d(-1.6%,-1%,0) scale(1.05); }
+  to   { transform: translate3d(1.6%,1.6%,0)  scale(1.10); }
+}
+
+/* ---- floating-panel layout ---- */
+.app-shell {
+  background: transparent; gap: 10px; padding: 10px;
+  grid-template-columns: 76px 244px 1fr auto;
+}
+.guild-rail, .sidebar, #content, .member-column {
+  background: var(--glass-tint);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: var(--shadow-2), var(--glass-hi);
+}
+.member-column { border-left: 1px solid var(--border); }
+.content-header { border-bottom: 1px solid var(--border); }
+
+/* ---- floating controls: the same glass PLUS real refraction ---- */
+.composer, .context-menu, .modal, .mention-pop, .emoji-picker, .gif-picker,
+.status-menu, .pins-pop, .profile-card, .toast, .voice-bar,
+.msg-actions, .search-hit, .jump-present, .embed-card, .vm, .recording-bar,
+.pending-chip, .reaction {
+  background: var(--glass-float);
+  -webkit-backdrop-filter: blur(15px) saturate(180%);
+  backdrop-filter: blur(15px) saturate(180%);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1), var(--glass-hi);
+}
+.modal, .context-menu, .mention-pop, .emoji-picker, .gif-picker,
+.status-menu, .pins-pop, .profile-card { box-shadow: var(--shadow-2), var(--glass-hi); }
+
+/* enable the refraction where Chromium supports SVG filters as backdrop */
+@supports (backdrop-filter: url(#glass-refract)) or (-webkit-backdrop-filter: url(#glass-refract)) {
+  .composer, .context-menu, .modal, .mention-pop, .emoji-picker, .gif-picker,
+  .status-menu, .pins-pop, .profile-card, .toast, .voice-bar, .msg-actions,
+  .jump-present, .recording-bar {
+    -webkit-backdrop-filter: blur(13px) saturate(180%) url(#glass-refract);
+    backdrop-filter: blur(13px) saturate(180%) url(#glass-refract);
+  }
+}
+
+/* ---- inputs & rows ---- */
+.text-input, .composer, .edit-box, .profile-form textarea {
+  background: rgba(255,255,255,.62); border-color: rgba(15,23,42,.14);
+}
+.text-input:focus, .edit-box:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-quiet); }
+.channel:hover { background: var(--hover); }
+.channel.active { background: var(--accent-quiet); }
+.channel.active .name { color: var(--text); font-weight: 600; }
+.channel.active .glyph { color: var(--accent); }
+.message:hover { background: rgba(15,23,42,.04); }
+.member-row:hover, .voice-presence-user:hover, .ctx-item:hover,
+.status-opt:hover, .status-menu-item:hover, .mention-opt.active,
+.pin-item:hover, .header-icon-btn:hover, .user-bar .user-info:hover,
+.user-bar .icon-btn:hover { background: var(--hover); }
+
+/* ---- guild rail glass tiles ---- */
+.guild-icon { background: rgba(255,255,255,.72); color: #0f172a; }
+.guild-icon:hover { background: var(--accent); color: #fff; box-shadow: 0 6px 18px -4px rgba(47,128,255,.5); }
+.guild-slot.active .guild-icon { background: var(--accent); color: #fff; }
+.guild-icon.action { background: rgba(255,255,255,.6); color: var(--accent); }
+.rail-divider { background: rgba(15,23,42,.14); }
+
+/* ---- primary accent: glossy blue button ---- */
+.btn {
+  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+  color: #fff; box-shadow: 0 6px 16px -6px rgba(47,128,255,.55), var(--glass-hi);
+}
+.btn:hover { background: linear-gradient(180deg, #7db0ff, var(--accent-hover)); }
+.composer #send-btn { color: var(--accent); }
+.composer #send-btn:hover { color: #fff; background: var(--accent); box-shadow: 0 4px 14px -4px rgba(47,128,255,.7); }
+.vm-play { background: linear-gradient(180deg, var(--accent-hover), var(--accent)); color: #fff; }
+.seg button.active { background: var(--accent); color: #fff; }
+.switch input:checked + .slider { background: var(--accent); }
+
+/* ---- voice controls on glass ---- */
+.voice-stage, .voice-controls { background: transparent; }
+.voice-controls { border-top: 1px solid var(--border); }
+.voice-controls .vc-btn { background: rgba(255,255,255,.72); color: #0f172a; box-shadow: var(--glass-hi); }
+.voice-controls .vc-btn:hover { background: #fff; }
+.voice-controls .vc-btn.off { background: #dce3ef; color: #0f172a; }
+.tile { background: rgba(255,255,255,.5); border: 1px solid var(--border); box-shadow: var(--glass-hi); }
+
+/* ---- auth: a single glass card floating on the mesh ---- */
+.auth-screen { background: transparent; }
+.auth-card {
+  background: var(--glass-float);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%) url(#glass-refract);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-2), var(--glass-hi);
+}
+.brand { color: #0f172a; text-shadow: none; }
+
+/* ---- pills / badges / chips ---- */
+.ephemeral-pill { background: var(--accent-quiet); border: 1px solid var(--accent-line); }
+.reply-bar { background: var(--glass-float); border-color: var(--border); }
+.modal-footer { background: rgba(15,23,42,.03); }
+.toast.error { color: var(--danger); border-color: var(--danger); }
+
+/* the sidebar footer reads as part of the glass, not an opaque slab */
+.user-bar { background: rgba(15,23,42,.03); border-top: 1px solid var(--border); }
+/* code + spoilers as light frosted panels */
+.md-code, .md-inline-code { background: rgba(15,23,42,.05); border-color: var(--border); color: var(--text); }
+.spoiler { background: rgba(15,23,42,.18); }
+.spoiler.revealed { background: rgba(15,23,42,.05); }
+/* modal dim: a soft frosted scrim */
+.modal-backdrop { background: rgba(15,23,42,.30); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+/* attachment file chips */
+.attach-file { background: rgba(255,255,255,.6); border-color: var(--border); }
+
+/* scrollbars on the light UI */
+*::-webkit-scrollbar-thumb { background: rgba(15,23,42,.22); }
+*::-webkit-scrollbar-thumb:hover { background: rgba(15,23,42,.34); }
+
+/* ---- graceful degradation ---- */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .guild-rail, .sidebar, #content, .member-column { background: rgba(255,255,255,.96); }
+  .composer, .context-menu, .modal, .mention-pop, .emoji-picker, .gif-picker,
+  .status-menu, .pins-pop, .profile-card, .auth-card { background: rgba(255,255,255,.99); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .guild-rail, .sidebar, #content, .member-column,
+  .composer, .context-menu, .modal, .mention-pop, .emoji-picker, .gif-picker,
+  .status-menu, .pins-pop, .profile-card, .auth-card {
+    -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(255,255,255,.98) !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) { #glass-bg::before { animation: none; } }
+
+/* don't pad the floating layout on phones (panels go edge-to-edge) */
+@media (max-width: 640px) {
+  .app-shell { padding: 0; gap: 0; }
+  .guild-rail, .sidebar, #content, .member-column { border-radius: 0; }
+}
+

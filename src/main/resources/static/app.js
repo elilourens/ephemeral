@@ -41,6 +41,9 @@
     readState: {},               // channelId -> {channelId, mentionCount, lastReadId, latestId}
     newDivider: null,            // lastReadId boundary for the "New messages" divider in the open channel
     draftMentions: {},           // displayName -> userId for the current composer draft
+    dmMode: false,               // are we in the Direct Messages "space"?
+    dms: [],                     // [DmDto] my DM conversations
+    currentDm: null,             // the open DM (DmDto)
   };
 
   // Element lookup shortcut.
@@ -232,6 +235,10 @@
     volume: '<path d="M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.4 18.4a9 9 0 0 0 0-12.8"/>',
     paperclip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
     mic: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+    "external-link": '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    "message-circle": '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+    phone: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
     "mic-off": '<line x1="2" x2="22" y1="2" y2="22"/><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2"/><path d="M5 10v2a7 7 0 0 0 12 5"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><line x1="12" x2="12" y1="19" y2="22"/>',
     video: '<path d="m16 13 5.22 3.48a.5.5 0 0 0 .78-.42V7.87a.5.5 0 0 0-.75-.43L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
     "screen-share": '<path d="M13 3H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3"/><path d="M8 21h8"/><path d="M12 17v4"/><path d="m17 8 5-5"/><path d="M17 3h5v5"/>',
@@ -308,7 +315,7 @@
   }
   function statusDot(userId) {
     const st = presenceState(state.presence[userId]);
-    return h("span", { class: "status-dot " + st, dataset: { presence: userId }, title: statusLabel(st) });
+    return h("span", { class: "status-dot " + st, dataset: { presence: userId }, "aria-label": statusLabel(st) });
   }
   // Update every rendered status dot in place + refresh the user bar text.
   function applyPresence() {
@@ -517,6 +524,10 @@
     },
     voiceToken: (cid) => api(`/api/channels/${cid}/voice-token`, { method: "POST" }),
 
+    listDms: () => api("/api/dms"),
+    openDm: (userId) => api("/api/dms", { method: "POST", body: { userId } }),
+    openDmByUsername: (username) => api("/api/dms", { method: "POST", body: { username } }),
+
     react: (id, emoji) => api(`/api/messages/${id}/react`, { method: "POST", body: { emoji } }),
     pin: (id) => api(`/api/messages/${id}/pin`, { method: "POST" }),
     unpin: (id) => api(`/api/messages/${id}/pin`, { method: "DELETE" }),
@@ -536,6 +547,7 @@
     reconnectTimer: null,
     subscribed: null,      // channelId we're currently subscribed to
     guildSubs: new Set(),  // every guildId we're subscribed to (cross-server unread/mentions)
+    dmSubs: new Set(),     // every DM channel we're subscribed to (DMs have no guild)
 
     connect() {
       if (!state.token) return;
@@ -557,6 +569,10 @@
           const guilds = new Set(this.guildSubs);
           this.guildSubs = new Set();
           for (const gid of guilds) this.subscribeGuild(gid);
+          // re-subscribe to our DM channels too
+          const dmIds = new Set(this.dmSubs);
+          this.dmSubs = new Set();
+          this.subscribeDms([...dmIds]);
           // …and to whatever text channel is open (for typing indicators).
           if (state.currentChannel && state.currentChannel.type === "text") {
             this.subscribed = null;
@@ -607,6 +623,15 @@
       this.send({ type: "subscribe_guild", guildId });
     },
     subscribeGuilds(ids) { for (const id of ids) this.subscribeGuild(id); },
+    // DM channels are subscribed persistently (like guilds) so their messages +
+    // unread badges arrive even when you're not looking at the conversation.
+    subscribeDms(ids) {
+      for (const id of ids) {
+        if (this.dmSubs.has(id)) continue;
+        this.dmSubs.add(id);
+        this.send({ type: "subscribe", channelId: id });
+      }
+    },
     unsubscribeGuild(guildId) {
       if (!this.guildSubs.has(guildId)) return;
       this.guildSubs.delete(guildId);
@@ -638,6 +663,7 @@
             onIncomingMessage(d);
           } else {
             markChannelUnreadFromMessage(d);
+            markDmUnread(d.channelId);
           }
           break;
         case "message_updated":
@@ -722,6 +748,7 @@
     inputMode: "voice",        // "voice" (activity) | "ptt" (push-to-talk)
     pttKey: "Space",           // KeyboardEvent.code for the PTT key
     pttRelease: 200,           // ms release delay
+    afkTimeoutMin: 15,         // auto-disconnect from voice after N idle minutes (0 = never)
     notifSound: true,
   };
   let media = (() => {
@@ -729,6 +756,22 @@
     catch { return { ...defaultMedia }; }
   })();
   function saveMedia() { try { localStorage.setItem(MEDIA_KEY, JSON.stringify(media)); } catch {} pushSettings(); }
+
+  // ---- voice inactivity auto-disconnect (Discord-style AFK timeout) ----
+  // Discord auto-disconnects idle users from voice to save bandwidth. We mirror
+  // that client-side: any interaction (or you speaking) resets the timer; after
+  // the configured idle window with none, we leave the call.
+  let _afkLast = Date.now();
+  function afkBump() { _afkLast = Date.now(); }
+  function afkCheck() {
+    const mins = media.afkTimeoutMin || 0;
+    if (!mins || !voice.room) return;
+    if (Date.now() - _afkLast >= mins * 60000) {
+      afkBump();               // reset so we only fire once
+      voice.leave();
+      toast("Disconnected from voice — inactive for " + mins + " min");
+    }
+  }
 
   // ---- settings persistence across restarts + devices (server-side) ----
   let _pushT = null;
@@ -923,27 +966,51 @@
     const modeSeg = segRow("Input Mode", "inputMode", [["voice", "Voice Activity"], ["ptt", "Push to Talk"]],
       () => { pttFields.style.display = media.inputMode === "ptt" ? "" : "none"; if (voice.applyInputMode) voice.applyInputMode(); });
 
-    const body = [
-      h("div", { class: "set-section-title", text: "Voice" }),
-      selectRow("Input Device", "audioinput", "audioInput"),
-      selectRow("Output Device", "audiooutput", "audioOutput"),
-      field("Input Volume", h("div", { class: "range-wrap" }, vol, volVal)),
-      field("Mic Test", meter, "Speak — the bars show your input level."),
-      modeSeg, pttFields,
-      toggleRow("Echo Cancellation", "echoCancellation", "Removes speaker echo picked up by your mic. Turn off with headphones for a touch more fidelity.", applyLiveAudio),
-      toggleRow("Noise Suppression", "noiseSuppression", "Filters background noise (fans, keyboards, hum).", applyLiveAudio),
-      toggleRow("Voice Isolation", "voiceIsolation", "Strongest noise removal (Chromium). Overrides Noise Suppression while on.", applyLiveAudio),
-      toggleRow("Automatic Gain Control", "autoGainControl", "Auto-levels your volume so you stay audible.", applyLiveAudio),
-      toggleRow("High-Quality Audio", "hqAudio", "96 kbps Opus for crisper voice (more bandwidth). Applies next call.", null),
-      h("div", { class: "set-section-title", text: "Video" }),
-      selectRow("Camera", "videoinput", "videoInput"),
-      segRow("Camera Quality", "cameraRes", [["480", "480p"], ["720", "720p"], ["1080", "1080p"]]),
-      h("div", { class: "set-section-title", text: "Screen Share" }),
-      segRow("Resolution", "screenRes", [["720", "720p"], ["1080", "1080p"], ["1440", "1440p"]], reshareIfActive),
-      segRow("Frame Rate", "screenFps", [[15, "15 fps"], [30, "30 fps"], [60, "60 fps"]], reshareIfActive),
-      segRow("Priority", "screenPriority", [["clarity", "Clarity"], ["balanced", "Balanced"], ["motion", "Motion"]], reshareIfActive),
-      h("div", { class: "set-note", text: "Screen-share changes take effect the next time you start sharing." }),
+    // inactivity auto-disconnect (Discord-style AFK timeout)
+    const afkSel = h("select", { class: "text-input" });
+    [["0", "Never"], ["5", "After 5 min"], ["15", "After 15 min"], ["30", "After 30 min"], ["60", "After 60 min"]]
+      .forEach(([v, t]) => afkSel.appendChild(h("option", { value: v, text: t })));
+    afkSel.value = String(media.afkTimeoutMin ?? 15);
+    afkSel.addEventListener("change", () => { media.afkTimeoutMin = +afkSel.value; saveMedia(); afkBump(); });
+
+    // one tab per section header
+    const sections = [
+      { name: "Voice", rows: [
+        selectRow("Input Device", "audioinput", "audioInput"),
+        selectRow("Output Device", "audiooutput", "audioOutput"),
+        field("Input Volume", h("div", { class: "range-wrap" }, vol, volVal)),
+        field("Mic Test", meter, "Speak — the bars show your input level."),
+        modeSeg, pttFields,
+        toggleRow("Echo Cancellation", "echoCancellation", "Removes speaker echo picked up by your mic. Turn off with headphones for a touch more fidelity.", applyLiveAudio),
+        toggleRow("Noise Suppression", "noiseSuppression", "Filters background noise (fans, keyboards, hum).", applyLiveAudio),
+        toggleRow("Voice Isolation", "voiceIsolation", "Strongest noise removal (Chromium). Overrides Noise Suppression while on.", applyLiveAudio),
+        toggleRow("Automatic Gain Control", "autoGainControl", "Auto-levels your volume so you stay audible.", applyLiveAudio),
+        toggleRow("High-Quality Audio", "hqAudio", "96 kbps Opus for crisper voice (more bandwidth). Applies next call.", null),
+        field("Disconnect When Inactive", afkSel, "Automatically leaves the call after you've been idle this long (like Discord's AFK timeout)."),
+      ] },
+      { name: "Video", rows: [
+        selectRow("Camera", "videoinput", "videoInput"),
+        segRow("Camera Quality", "cameraRes", [["480", "480p"], ["720", "720p"], ["1080", "1080p"]]),
+      ] },
+      { name: "Screen Share", rows: [
+        segRow("Resolution", "screenRes", [["720", "720p"], ["1080", "1080p"], ["1440", "1440p"]], reshareIfActive),
+        segRow("Frame Rate", "screenFps", [[15, "15 fps"], [30, "30 fps"], [60, "60 fps"]], reshareIfActive),
+        segRow("Priority", "screenPriority", [["clarity", "Clarity"], ["balanced", "Balanced"], ["motion", "Motion"]], reshareIfActive),
+        h("div", { class: "set-note", text: "Screen-share changes take effect the next time you start sharing." }),
+      ] },
     ];
+    const tabbar = h("div", { class: "set-tabs" });
+    const panels = sections.map((s, i) => h("div", { class: "set-tabpanel" + (i ? " hidden" : "") }, ...s.rows));
+    sections.forEach((s, i) => {
+      const btn = h("button", { class: "set-tab" + (i ? "" : " active"), text: s.name });
+      btn.onclick = () => {
+        [...tabbar.children].forEach((c) => c.classList.remove("active"));
+        btn.classList.add("active");
+        panels.forEach((p, j) => p.classList.toggle("hidden", j !== i));
+      };
+      tabbar.appendChild(btn);
+    });
+    const body = [tabbar, ...panels];
 
     const { backdrop } = modal({
       title: "Voice & Video Settings",
@@ -1114,6 +1181,7 @@
       const room = new LK.Room(roomOptions());
       this.room = room;
       this.channelId = channel.id;
+      this._joinedChannel = channel; // remember for DM calls (no guild lookup)
 
       // Remote media in/out.
       room.on(LK.RoomEvent.TrackSubscribed, (track, pub, participant) => {
@@ -1139,17 +1207,20 @@
         this.rebuildRoster();
         this.syncControls();
       });
-      room.on(LK.RoomEvent.ParticipantConnected, () => this.rebuildRoster());
-      room.on(LK.RoomEvent.ParticipantDisconnected, (p) => { this.removeTile(p.identity); this.rebuildRoster(); });
-      room.on(LK.RoomEvent.ActiveSpeakersChanged, (speakers) => this.highlightSpeakers(speakers));
+      room.on(LK.RoomEvent.ParticipantConnected, () => { this.rebuildRoster(); this.setMicEnabled(this.mic); });
+      room.on(LK.RoomEvent.ParticipantDisconnected, (p) => { this.removeTile(p.identity); this.rebuildRoster(); this.setMicEnabled(this.mic); });
+      room.on(LK.RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        this.highlightSpeakers(speakers);
+        if (speakers.some((s) => s.isLocal)) afkBump(); // speaking counts as activity
+      });
       room.on(LK.RoomEvent.TrackMuted, () => this.rebuildRoster());
       room.on(LK.RoomEvent.TrackUnmuted, () => this.rebuildRoster());
       room.on(LK.RoomEvent.Disconnected, () => this.cleanup());
 
       try {
         await room.connect(tok.url, tok.token);
-        await room.localParticipant.setMicrophoneEnabled(true);
         this.mic = true;
+        await this.setMicEnabled(true); // no-op while alone; starts when others join
         await this.applyInputGain(); // saved input volume ≠ 100% → attach gain chain
         await this.applyInputMode(); // push-to-talk: start muted until the key is held
         this.broadcastState();       // publish our initial mute/deafen/screen state
@@ -1255,7 +1326,8 @@
         if (!tile) return;
         const isLocal = p === this.room.localParticipant;
         const vp = vpList.find((x) => x.userId === p.identity) || {};
-        const muted = this.isMuted(p) || vp.muted;
+        // your own tile reflects your intent, not the alone-suppressed publish
+        const muted = isLocal ? !this.mic : (this.isMuted(p) || vp.muted);
         tile.classList.toggle("has-video", !!tile.querySelector("video"));
         const label = tile.querySelector(".tile-label");
         label.innerHTML = "";
@@ -1265,7 +1337,9 @@
       });
       if (this.focusedKey && !this.tiles.has(this.focusedKey)) this.focusedKey = null;
       this.applyLayout();
-      setVoiceStatus(`Connected — ${participants.length} in call`);
+      setVoiceStatus(participants.length <= 1
+        ? "Connected — you're the only one here"
+        : `Connected — ${participants.length} in call`);
     },
 
     isMuted(p) {
@@ -1307,7 +1381,7 @@
           if (!isStage) strip.appendChild(tile);
           const exit = tile.querySelector(":scope > .stage-exit");
           if (isStage && !exit) {
-            tile.appendChild(h("button", { class: "stage-exit", title: "Exit focus (Esc)",
+            tile.appendChild(h("button", { class: "stage-exit", "aria-label": "Exit focus (Esc)",
               onclick: (e) => { e.stopPropagation(); this.unfocus(); } }, icon("x", 18)));
           } else if (!isStage && exit) {
             exit.remove();
@@ -1324,12 +1398,21 @@
       }
     },
 
+    // Bandwidth saver (Discord-style): while you're the only person in the call
+    // we don't actually publish the mic — audio only starts transmitting once at
+    // least one other participant is present. `this.mic` stays the user's intent.
+    hasOthers() { return !!(this.room && this.room.remoteParticipants && this.room.remoteParticipants.size >= 1); },
+    async setMicEnabled(intendedOn) {
+      if (!this.room) return;
+      try { await this.room.localParticipant.setMicrophoneEnabled(!!intendedOn && this.hasOthers()); } catch {}
+    },
+
     async toggleMic() {
       if (!this.room) return;
       // Un-muting the mic implicitly un-deafens (Discord behavior).
       if (!this.mic && this.deafened) return this.setDeafen(false);
       this.mic = !this.mic;
-      await this.room.localParticipant.setMicrophoneEnabled(this.mic);
+      await this.setMicEnabled(this.mic);
       this.syncControls();
       this.rebuildRoster();
       this.broadcastState();
@@ -1341,7 +1424,7 @@
       document.querySelectorAll("#voice-audio-sink audio").forEach((el) => {
         el.muted = on || this.localMutes.has(el.dataset.identity);
       });
-      if (on && this.mic) { this.mic = false; await this.room.localParticipant.setMicrophoneEnabled(false); }
+      if (on && this.mic) { this.mic = false; await this.setMicEnabled(false); }
       this.syncControls();
       this.rebuildRoster();
       this.broadcastState();
@@ -1379,23 +1462,23 @@
     async applyInputMode() {
       if (!this.room || this.deafened) return;
       if (media.inputMode === "ptt") {
-        if (this.mic && !this._pttHeld) { this.mic = false; await this.room.localParticipant.setMicrophoneEnabled(false); this.syncControls(); this.broadcastState(); }
+        if (this.mic && !this._pttHeld) { this.mic = false; await this.setMicEnabled(false); this.syncControls(); this.broadcastState(); }
       } else {
-        if (!this.mic) { this.mic = true; await this.room.localParticipant.setMicrophoneEnabled(true); this.syncControls(); this.broadcastState(); }
+        if (!this.mic) { this.mic = true; await this.setMicEnabled(true); this.syncControls(); this.broadcastState(); }
       }
     },
     async pttDown() {
       if (media.inputMode !== "ptt" || !this.room || this.deafened) return;
       clearTimeout(this._pttTimer);
       this._pttHeld = true;
-      if (!this.mic) { this.mic = true; await this.room.localParticipant.setMicrophoneEnabled(true); this.syncControls(); this.broadcastState(); }
+      if (!this.mic) { this.mic = true; await this.setMicEnabled(true); this.syncControls(); this.broadcastState(); }
     },
     pttUp() {
       if (media.inputMode !== "ptt" || !this.room) return;
       this._pttHeld = false;
       clearTimeout(this._pttTimer);
       this._pttTimer = setTimeout(async () => {
-        if (this.mic && !this._pttHeld) { this.mic = false; await this.room.localParticipant.setMicrophoneEnabled(false); this.syncControls(); this.broadcastState(); }
+        if (this.mic && !this._pttHeld) { this.mic = false; await this.setMicEnabled(false); this.syncControls(); this.broadcastState(); }
       }, Math.max(0, Math.min(2000, media.pttRelease || 200)));
     },
 
@@ -1497,12 +1580,21 @@
   function renderGuildRail() {
     const rail = $("guild-rail");
     rail.innerHTML = "";
+    // Home / Direct Messages sits above the servers (like Discord's home button).
+    const dmUnread = dmUnreadCount();
+    const home = h("div", { class: "guild-icon action dm-home", "data-tip": "Direct Messages", onclick: enterDmMode },
+      icon("message-circle", 24));
+    const homeSlot = h("div", { class: "guild-slot" + (state.dmMode ? " active" : "") + (dmUnread ? " unread" : "") },
+      h("span", { class: "guild-pill" }), home);
+    if (dmUnread) homeSlot.appendChild(h("span", { class: "guild-mention", text: dmUnread > 99 ? "99+" : String(dmUnread) }));
+    rail.appendChild(homeSlot);
+    rail.appendChild(h("div", { class: "rail-divider" }));
     for (const g of state.guilds) {
       const active = state.currentGuild && state.currentGuild.id === g.id;
       const { unread, mentions } = guildUnread(g);
       const icon = h("div", {
         class: "guild-icon",
-        title: g.name,
+        "aria-label": g.name,
         style: `background:${colorFor(g.id)}`,
         text: initials(g.name),
         onclick: () => selectGuild(g.id),
@@ -1518,15 +1610,16 @@
     }
     rail.appendChild(h("div", { class: "rail-divider" }));
     rail.appendChild(h("div", {
-      class: "guild-icon action", title: "Create a server", onclick: openCreateGuildModal,
+      class: "guild-icon action", "aria-label": "Create a server", onclick: openCreateGuildModal,
     }, icon("plus", 24)));
     rail.appendChild(h("div", {
-      class: "guild-icon action", title: "Browse servers", onclick: openDiscoverModal,
+      class: "guild-icon action", "aria-label": "Browse servers", onclick: openDiscoverModal,
     }, icon("compass", 24)));
   }
 
   // ---- channel sidebar ----
   function renderChannels() {
+    if (state.dmMode) { renderDmSidebar(); return; }
     const g = state.currentGuild;
     const gn = $("guild-name");
     gn.textContent = g ? g.name : "ephemeral";
@@ -1545,7 +1638,7 @@
       const header = h("div", { class: "channel-group-header" }, h("span", { text: title }));
       if (amAdmin()) {
         header.appendChild(h("button", {
-          title: "Create channel",
+          "aria-label": "Create channel",
           onclick: () => openCreateChannelModal(title === "Text Channels" ? "text" : "voice"),
         }, icon("plus", 18)));
       }
@@ -1575,9 +1668,9 @@
         if (mc > 0) row.appendChild(h("span", { class: "mention-badge", text: mc > 99 ? "99+" : String(mc) }));
         if (amAdmin()) {
           row.appendChild(h("div", { class: "chan-actions" },
-            h("button", { class: "chan-act", title: "Edit channel",
+            h("button", { class: "chan-act", "aria-label": "Edit channel",
               onclick: (e) => { e.stopPropagation(); renameChannelFlow(c); } }, icon("pencil", 14)),
-            h("button", { class: "chan-act chan-delete", title: "Delete channel",
+            h("button", { class: "chan-act chan-delete", "aria-label": "Delete channel",
               onclick: (e) => { e.stopPropagation(); deleteChannel(c); } }, icon("x", 15))
           ));
         }
@@ -1596,7 +1689,7 @@
               if (p.screen) icons.appendChild(h("span", { class: "live-badge", text: "LIVE" }));
               if (p.deafened) icons.appendChild(h("span", { class: "vp-ic deaf" }, icon("headphone-off", 13)));
               else if (p.muted) icons.appendChild(h("span", { class: "vp-ic mute" }, icon("mic-off", 13)));
-              presence.appendChild(h("div", { class: "voice-presence-user", title: p.name,
+              presence.appendChild(h("div", { class: "voice-presence-user", "aria-label": p.name,
                 onclick: (e) => { e.stopPropagation(); openProfileCard(p.userId, e.currentTarget); } },
                 avatar(p.name, p.userId, "sm", p.userId),
                 h("span", { class: "vp-name", text: p.name }),
@@ -1639,9 +1732,13 @@
       else lo.append(icon("hourglass", 14), "Scroll up for earlier messages");
       list.appendChild(lo);
     } else if (state.currentChannel) {
+      const _c = state.currentChannel;
+      const _dm = _c.type === "dm";
       list.appendChild(h("div", { class: "chat-intro" },
-        h("h2", { text: "#" + state.currentChannel.name }),
-        h("p", {}, "This is the start of the channel. Messages here vanish after 7 days unless saved ", icon("bookmark", 13), ".")
+        h("h2", { text: (_dm ? "" : "#") + _c.name }),
+        h("p", {}, _dm
+          ? "This is the start of your conversation. Messages here vanish after 7 days unless saved "
+          : "This is the start of the channel. Messages here vanish after 7 days unless saved ", icon("bookmark", 13), ".")
       ));
     }
 
@@ -1688,9 +1785,10 @@
     // A reply preview forces its own header row (never grouped) so the quote reads.
     if (m.replyTo) grouped = false;
 
-    // gutter: avatar for a group head, hover-timestamp for grouped rows
+    // gutter: avatar for a group head, empty (aligned) for grouped rows —
+    // no hover-timestamp (it read as buggy on hover)
     const gutter = grouped
-      ? h("div", { class: "gutter" }, h("span", { class: "ts-hover", text: clockTime(m.createdAt) }))
+      ? h("div", { class: "gutter" })
       : h("div", { class: "gutter" }, avatar(name, m.authorId, "", m.authorId));
 
     const body = h("div", { class: "body" });
@@ -1704,10 +1802,11 @@
     if (m.replyTo) {
       const rt = m.replyTo;
       body.appendChild(h("div", {
-        class: "reply-preview", title: "Jump to replied message",
+        class: "reply-preview",
         onclick: () => jumpToMessage(rt.id),
       },
         icon("reply", 14),
+        avatar(rt.authorName || "Unknown", rt.authorId, "sm"),
         h("span", { class: "rp-author", text: rt.authorName || "Unknown" }),
         h("span", { class: "rp-snippet", text: replySnippet(rt.content) })
       ));
@@ -1721,7 +1820,7 @@
       });
       body.appendChild(h("div", { class: "meta" },
         authorSpan,
-        h("span", { class: "time", title: fullTime(m.createdAt), text: relativeTime(m.createdAt) })
+        h("span", { class: "time", text: relativeTime(m.createdAt) })
       ));
     }
 
@@ -1744,8 +1843,8 @@
       }
     }
 
-    // hover action toolbar
-    const actBtn = (ic, title, cls, onclick) => h("button", { class: cls || "", title, onclick }, ic);
+    // hover action toolbar — aria-label (not title) so no tooltip pops on hover
+    const actBtn = (ic, label, cls, onclick) => h("button", { class: cls || "", "aria-label": label, onclick }, ic);
     const actions = h("div", { class: "msg-actions" },
       actBtn(icon("smile", 16), "Add reaction", "",
         (e) => openEmojiPicker(e.currentTarget, (emoji) => reactWith(m, emoji))),
@@ -1753,8 +1852,8 @@
       mine ? actBtn(icon("pencil", 16), "Edit", "", () => startEdit(m)) : null,
       canPin ? actBtn(icon("pin", 16, m.pinned), m.pinned ? "Unpin" : "Pin",
         m.pinned ? "starred" : "", () => togglePin(m)) : null,
-      actBtn(icon("bookmark", 16, m.saved), m.saved ? "Un-save (let it expire)" : "Save forever",
-        m.saved ? "starred" : "", () => toggleSave(m)),
+      mine ? actBtn(icon("bookmark", 16, m.saved), m.saved ? "Un-save (let it expire)" : "Save forever",
+        m.saved ? "starred" : "", () => toggleSave(m)) : null,
       canDelete ? actBtn(icon("trash", 16), "Delete", "del", () => deleteMessage(m)) : null,
       actBtn(icon("more-horizontal", 16), "More", "",
         (e) => { const r = e.currentTarget.getBoundingClientRect(); openMessageMenu(m, r.right, r.bottom); }),
@@ -1777,14 +1876,14 @@
     for (const r of m.reactions) {
       row.appendChild(h("button", {
         class: "reaction" + (r.mine ? " mine" : ""),
-        title: r.emoji,
+        "aria-label": r.emoji,
         onclick: () => reactWith(m, r.emoji),
       },
         h("span", { class: "re-emoji", text: r.emoji }),
         h("span", { class: "re-count", text: String(r.count) })
       ));
     }
-    row.appendChild(h("button", { class: "reaction add", title: "Add reaction",
+    row.appendChild(h("button", { class: "reaction add", "aria-label": "Add reaction",
       onclick: (e) => openEmojiPicker(e.currentTarget, (emoji) => reactWith(m, emoji)) }, icon("smile", 15)));
     return row;
   }
@@ -1856,7 +1955,7 @@
         h("span", { text: "Replying to " }),
         h("span", { class: "reply-bar-name", text: state.replyingTo.authorName })
       ),
-      h("button", { class: "reply-bar-close", title: "Cancel reply", onclick: cancelReply }, icon("x", 16))
+      h("button", { class: "reply-bar-close", "aria-label": "Cancel reply", onclick: cancelReply }, icon("x", 16))
     );
   }
   function jumpToMessage(id) {
@@ -1882,11 +1981,14 @@
         let peaks = []; try { peaks = JSON.parse(a.waveform) || []; } catch {}
         wrap.appendChild(voicePlayer(a.url, peaks, (a.durationMs || 0) / 1000));
       } else if (isImage(a)) {
-        wrap.appendChild(h("a", { href: a.url, target: "_blank", rel: "noopener noreferrer" },
+        // click opens an in-app preview; ctrl/cmd/shift-click still opens the tab
+        wrap.appendChild(h("a", { class: "attach-image-link", href: a.url,
+          onclick: (e) => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); openMediaPreview(a); } },
           h("img", { class: "attach-image", src: a.url, alt: a.filename, loading: "lazy" })
         ));
       } else {
-        wrap.appendChild(h("a", { class: "attach-file", href: a.url, target: "_blank", rel: "noopener noreferrer", download: a.filename },
+        wrap.appendChild(h("a", { class: "attach-file", href: a.url, download: a.filename,
+          onclick: (e) => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); openMediaPreview(a); } },
           h("span", { class: "file-icon" }, icon("file", 24)),
           h("div", { class: "file-meta" },
             h("div", { class: "file-name", text: a.filename }),
@@ -1896,6 +1998,61 @@
       }
     }
     return wrap;
+  }
+
+  // Classify an attachment for the in-app preview (lightbox).
+  function attKind(a) {
+    const ct = (a.contentType || "").toLowerCase();
+    if (ct.startsWith("image/")) return "image";
+    if (ct.startsWith("video/")) return "video";
+    if (ct.startsWith("audio/")) return "audio";
+    if (ct === "application/pdf") return "pdf";
+    if (ct.startsWith("text/")) return "text";
+    return "file";
+  }
+
+  // In-app media preview — opens an attachment in a lightbox overlay instead of
+  // a new tab. Image / video / audio / pdf / text render inline; anything else
+  // gets a download card. Dismisses on backdrop click, the ✕, or Escape (the
+  // global Escape handler calls closeModal, which clears #modal-root).
+  function openMediaPreview(a) {
+    const kind = attKind(a);
+    const stage = h("div", { class: "lb-stage" });
+    if (kind === "image") {
+      stage.appendChild(h("img", { class: "lb-img", src: a.url, alt: a.filename }));
+    } else if (kind === "video") {
+      stage.appendChild(h("video", { class: "lb-video", src: a.url, controls: "", autoplay: "", playsinline: "" }));
+    } else if (kind === "audio") {
+      stage.appendChild(h("div", { class: "lb-card" },
+        h("span", { class: "file-icon" }, icon("play", 36)),
+        h("div", { class: "lb-cardname", text: a.filename }),
+        h("audio", { src: a.url, controls: "", autoplay: "" })));
+    } else if (kind === "pdf") {
+      stage.appendChild(h("iframe", { class: "lb-frame", src: a.url, title: a.filename }));
+    } else if (kind === "text") {
+      const pre = h("pre", { class: "lb-text", text: "Loading preview…" });
+      stage.appendChild(pre);
+      fetch(a.url).then((r) => r.text()).then((t) => { pre.textContent = t.slice(0, 200000); })
+        .catch(() => { pre.textContent = "Could not load preview."; });
+    } else {
+      stage.appendChild(h("div", { class: "lb-card" },
+        h("span", { class: "file-icon" }, icon("file", 44)),
+        h("div", { class: "lb-cardname", text: a.filename }),
+        h("div", { class: "lb-cardsub", text: formatBytes(a.sizeBytes) }),
+        h("div", { class: "lb-cardsub", text: "No preview available for this file type." })));
+    }
+    const bar = h("div", { class: "lb-bar" },
+      h("span", { class: "lb-name", text: a.filename }),
+      a.sizeBytes ? h("span", { class: "lb-size", text: formatBytes(a.sizeBytes) }) : null,
+      h("a", { class: "lb-act primary", href: a.url, download: a.filename }, icon("download", 16), h("span", { text: "Download" })),
+      h("a", { class: "lb-act", href: a.url, target: "_blank", rel: "noopener noreferrer" }, icon("external-link", 16), h("span", { text: "Open original" }))
+    );
+    const lb = h("div", { class: "lightbox", onclick: (e) => { if (e.target === lb) closeModal(); } },
+      h("button", { class: "lb-close", "aria-label": "Close preview", onclick: closeModal }, icon("x", 22)),
+      stage, bar
+    );
+    $("modal-root").innerHTML = "";
+    $("modal-root").appendChild(lb);
   }
 
   /* =======================================================================
@@ -1974,7 +2131,7 @@
       }
       // click-to-play facade: nothing loads from Google until the user clicks
       const b = h("button", {
-        class: "yt-facade", type: "button", title: "Play video", "aria-label": "Play video",
+        class: "yt-facade", type: "button", "aria-label": "Play video",
         onclick: () => {
           activeEmbeds.add(key);
           b.replaceWith(h("div", { class: "embed-frame-wrap" }, providerIframe(embed + "?autoplay=1", "16/9")));
@@ -2067,7 +2224,7 @@
         for (const g of res.results) {
           const src = safeHttpUrl(g.preview), full = safeHttpUrl(g.url);
           if (!src || !full) continue;
-          grid.appendChild(h("button", { class: "gif-cell", title: "Send GIF",
+          grid.appendChild(h("button", { class: "gif-cell", "aria-label": "Send GIF",
             onclick: () => { closePopover(); sendGif(full); } },
             h("img", { src, loading: "lazy", alt: "" })));
         }
@@ -2337,16 +2494,32 @@
       if (amAdmin() && !isMe) {
         const acts = h("div", { class: "m-actions" });
         if (m.role === "member") {
-          acts.appendChild(h("button", { title: "Promote to admin", onclick: () => changeRole(m, "admin") }, icon("chevron-up", 16)));
+          acts.appendChild(h("button", { "aria-label": "Promote to admin", onclick: () => changeRole(m, "admin") }, icon("chevron-up", 16)));
         } else {
-          acts.appendChild(h("button", { title: "Demote to member", onclick: () => changeRole(m, "member") }, icon("chevron-down", 16)));
+          acts.appendChild(h("button", { "aria-label": "Demote to member", onclick: () => changeRole(m, "member") }, icon("chevron-down", 16)));
         }
-        acts.appendChild(h("button", { title: "Kick", onclick: () => kickMember(m) }, icon("x", 16)));
+        acts.appendChild(h("button", { "aria-label": "Kick", onclick: () => kickMember(m) }, icon("x", 16)));
         row.appendChild(acts);
       }
       list.appendChild(row);
     }
-    col.classList.remove("hidden");
+    applyMembersVisibility();
+  }
+
+  // Decide whether the members column should be visible right now: honor an
+  // explicit user toggle, otherwise auto-hide on windows too narrow to show it
+  // without cramping the chat (which would force a horizontal squeeze of the
+  // message area). Re-run on channel select and on window resize.
+  const MEMBERS_MIN_VW = 1200;   // members auto-show only at/above this width
+  let membersUserPref = null;    // null = auto; true/false = explicit user choice
+  function membersAutoShow() { return window.innerWidth >= MEMBERS_MIN_VW; }
+  function applyMembersVisibility() {
+    const col = $("member-column");
+    const inChat = !$("chat-view").classList.contains("hidden");
+    const show = inChat && (membersUserPref === null ? membersAutoShow() : membersUserPref);
+    col.classList.toggle("hidden", !show);
+    const btn = $("toggle-members-btn");
+    if (btn) btn.classList.toggle("active", show);
   }
 
   // ---- voice view ----
@@ -2354,9 +2527,31 @@
   function renderVoiceHeader(channel) {
     const el = $("voice-channel-name");
     el.innerHTML = "";
+    if (channel.dm) {
+      const av = avatar(channel.name, channel.other && channel.other.id, "sm");
+      el.append(av, h("span", { class: "ch-name", text: channel.name }),
+        h("button", { class: "ch-toggle", "data-tip": "Back to messages",
+          onclick: () => { if (state.currentDm) selectDm(state.currentDm); } }, icon("hash", 15), h("span", { text: "Chat" })));
+      return;
+    }
     el.append(h("span", { class: "glyph" }, icon("volume", 20)), h("span", { class: "ch-name", text: channel.name }),
       h("button", { class: "ch-toggle", "data-tip": "Open text chat",
         onclick: () => { voiceChatOpen[channel.id] = true; selectChannel(channel.id); } }, icon("hash", 15), h("span", { text: "Chat" })));
+  }
+  // Brief "Connecting…" pane shown while auto-joining a voice channel on click.
+  function renderVoiceConnecting(channel) {
+    renderVoiceHeader(channel);
+    $("voice-controls").classList.add("hidden");
+    $("voice-tiles").classList.add("hidden");
+    setVoiceStatus("Connecting…");
+    const ph = $("voice-placeholder");
+    ph.classList.remove("hidden");
+    ph.innerHTML = "";
+    ph.append(
+      h("div", { class: "big-glyph" }, icon("volume", 64)),
+      h("h2", { text: channel.name }),
+      h("p", { text: "Connecting…" })
+    );
   }
   function renderVoiceIdle(channel) {
     renderVoiceHeader(channel);
@@ -2382,7 +2577,7 @@
     );
   }
   function renderVoiceConnected() {
-    const ch = state.currentGuild && (state.currentGuild.channels || []).find((c) => c.id === voice.channelId);
+    const ch = (state.currentGuild && (state.currentGuild.channels || []).find((c) => c.id === voice.channelId)) || voice._joinedChannel;
     if (ch) renderVoiceHeader(ch);
     $("voice-placeholder").classList.add("hidden");
     $("voice-tiles").classList.remove("hidden");
@@ -2396,25 +2591,176 @@
     const bar = $("voice-bar");
     if (!bar) return;
     if (!voice.room) { bar.classList.add("hidden"); bar.innerHTML = ""; return; }
+    const jc = voice._joinedChannel;
+    const isDm = !!(jc && jc.dm);
     const chan = state.currentGuild && (state.currentGuild.channels || []).find((c) => c.id === voice.channelId);
     bar.classList.remove("hidden");
     bar.innerHTML = "";
+    const label = isDm ? jc.name : (state.currentGuild && chan ? state.currentGuild.name : "In a call");
+    const returnToCall = () => {
+      if (isDm) { showView("voice"); renderVoiceConnected(); }
+      else if (chan) selectChannel(chan.id);
+    };
     bar.append(
-      h("div", { class: "vbar-info", title: "Return to call", onclick: () => { if (chan) selectChannel(chan.id); } },
+      h("div", { class: "vbar-info", "aria-label": "Return to call", onclick: returnToCall },
         h("span", { class: "vbar-status" }, icon("volume", 13), h("span", { text: " Voice Connected" })),
-        h("span", { class: "vbar-channel", text: chan ? chan.name : "Voice" })
+        h("span", { class: "vbar-channel", text: label })
       ),
       h("div", { class: "vbar-actions" },
-        h("button", { class: "vbar-btn" + (voice.mic ? "" : " off"), title: "Mute / unmute",
+        h("button", { class: "vbar-btn" + (voice.mic ? "" : " off"), "aria-label": "Mute / unmute",
           onclick: (e) => { e.stopPropagation(); voice.toggleMic(); } }, icon(voice.mic ? "mic" : "mic-off", 16)),
-        h("button", { class: "vbar-btn" + (voice.deafened ? " off" : ""), title: "Deafen / undeafen",
+        h("button", { class: "vbar-btn" + (voice.deafened ? " off" : ""), "aria-label": "Deafen / undeafen",
           onclick: (e) => { e.stopPropagation(); voice.toggleDeafen(); } }, icon(voice.deafened ? "headphone-off" : "headphones", 16)),
-        h("button", { class: "vbar-btn leave", title: "Disconnect",
+        h("button", { class: "vbar-btn leave", "aria-label": "Disconnect",
           onclick: (e) => { e.stopPropagation(); voice.leave(); } }, icon("phone-off", 16))
       )
     );
   }
   function setVoiceStatus(text) { const el = $("voice-status"); if (el) el.textContent = text; }
+
+  /* ======================================================================
+   * DIRECT MESSAGES — guild-less 1:1 conversations (text + calls). They reuse
+   * the chat view, the message pipeline and the voice/LiveKit layer; only
+   * membership and discovery differ. A DM presents to the rest of the app as a
+   * synthetic channel object of type "dm".
+   * ==================================================================== */
+  function dmChannelObj(dm) {
+    return { id: dm.channelId, type: "dm", dm: true,
+      name: dm.other.displayName || dm.other.username, other: dm.other };
+  }
+  function dmUnreadCount() { return (state.dms || []).filter((d) => d.unread).length; }
+
+  async function loadDms() {
+    try { state.dms = await API.listDms(); } catch { state.dms = state.dms || []; }
+    ws.subscribeDms((state.dms || []).map((d) => d.channelId));
+    if (state.dmMode) renderDmSidebar();
+    renderGuildRail();
+  }
+
+  function enterDmMode() {
+    state.dmMode = true;
+    state.currentGuild = null;
+    $("member-column").classList.add("hidden");
+    $("content").classList.remove("hide-mobile");
+    renderGuildRail();
+    renderDmSidebar();
+    if (state.currentDm) selectDm(state.currentDm);
+    else showView("empty");
+    loadDms();
+  }
+
+  function renderDmSidebar() {
+    const gn = $("guild-name");
+    gn.textContent = "Direct Messages";
+    gn.classList.remove("clickable");
+    gn.onclick = null; gn.oncontextmenu = null;
+    const list = $("channel-list");
+    list.innerHTML = "";
+    const head = h("div", { class: "channel-group-header" }, h("span", { text: "Direct Messages" }),
+      h("button", { "data-tip": "New DM", onclick: openNewDmModal }, icon("plus", 18)));
+    list.appendChild(head);
+    const dms = state.dms || [];
+    if (!dms.length) {
+      list.appendChild(h("div", { class: "dm-empty",
+        text: "No conversations yet. Start one from someone's profile, or with New DM." }));
+      return;
+    }
+    for (const dm of dms) {
+      const active = state.currentDm && state.currentDm.channelId === dm.channelId;
+      const av = avatar(dm.other.displayName || dm.other.username, dm.other.id, "sm");
+      av.classList.add("has-status"); av.appendChild(statusDot(dm.other.id));
+      const row = h("div", {
+        class: "channel dm-row" + (active ? " active" : "") + (dm.unread && !active ? " unread" : ""),
+        onclick: () => selectDm(dm),
+      }, av, h("span", { class: "name", text: dm.other.displayName || dm.other.username }),
+        (dm.unread && !active) ? h("span", { class: "dm-dot" }) : null);
+      list.appendChild(row);
+    }
+  }
+
+  async function selectDm(dm) {
+    state.dmMode = true;
+    state.currentDm = dm;
+    state.currentGuild = null;
+    state.currentChannel = dmChannelObj(dm);
+    dm.unread = false;
+    $("member-column").classList.add("hidden");
+    $("content").classList.remove("hide-mobile");
+    showView("chat");
+    renderDmHeader(dm);
+    clearTyping(); closeMention(); cancelReply();
+    renderGuildRail(); renderDmSidebar();
+    await loadMessages(dm.channelId);
+    ackCurrentLatest();
+  }
+
+  function renderDmHeader(dm) {
+    const el = $("chat-channel-name");
+    el.innerHTML = "";
+    const av = avatar(dm.other.displayName || dm.other.username, dm.other.id, "sm");
+    av.classList.add("has-status"); av.appendChild(statusDot(dm.other.id));
+    el.append(av, h("span", { class: "ch-name", text: dm.other.displayName || dm.other.username }),
+      h("button", { class: "ch-call", "data-tip": "Start voice call", onclick: () => startDmCall(false) }, icon("phone", 17)),
+      h("button", { class: "ch-call", "data-tip": "Start video call", onclick: () => startDmCall(true) }, icon("video", 17)));
+  }
+
+  async function startDmCall(video) {
+    const dm = state.currentDm;
+    if (!dm) return;
+    if (!voice.available()) { toast("Voice is unavailable", true); return; }
+    const ch = dmChannelObj(dm);
+    showView("voice");
+    renderVoiceConnecting(ch);
+    await voice.join(ch);
+    if (video && voice.room && !voice.cam) { try { await voice.toggleCam(); } catch {} }
+  }
+
+  function markDmUnread(channelId) {
+    const dm = (state.dms || []).find((x) => x.channelId === channelId);
+    if (!dm) return;
+    if (state.currentDm && state.currentDm.channelId === channelId
+        && !$("chat-view").classList.contains("hidden")) return; // we're looking at it
+    dm.unread = true;
+    if (state.dmMode) renderDmSidebar();
+    renderGuildRail();
+  }
+
+  async function openDmWithUser(userId) {
+    try {
+      const dm = await API.openDm(userId);
+      state.dms = state.dms || [];
+      const i = state.dms.findIndex((d) => d.channelId === dm.channelId);
+      if (i >= 0) state.dms[i] = dm; else state.dms.unshift(dm);
+      ws.subscribeDms([dm.channelId]);
+      closePopover(); closeModal();
+      selectDm(dm);
+    } catch (e) { toast(e.message, true); }
+  }
+
+  function openNewDmModal() {
+    const input = h("input", { class: "text-input", placeholder: "username", autocomplete: "off" });
+    const err = h("div", { class: "modal-error" });
+    const submit = async () => {
+      const uname = input.value.trim().replace(/^@/, "");
+      if (!uname) { err.textContent = "Enter a username"; return; }
+      try {
+        const dm = await API.openDmByUsername(uname);
+        state.dms = state.dms || [];
+        if (!state.dms.find((d) => d.channelId === dm.channelId)) state.dms.unshift(dm);
+        ws.subscribeDms([dm.channelId]);
+        closeModal();
+        selectDm(dm);
+      } catch (e) { err.textContent = e.message; }
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    modal({
+      title: "New Direct Message",
+      subtitle: "Message someone by their username.",
+      body: [h("label", {}, "Username", input), err],
+      footer: [h("button", { class: "btn btn-secondary", text: "Cancel", onclick: closeModal }),
+        h("button", { class: "btn", text: "Message", onclick: submit })],
+    });
+  }
 
   /* =======================================================================
    * 6. ACTIONS — user intents
@@ -2434,6 +2780,7 @@
     renderUserBar();
     ws.connect();
     await loadGuilds();
+    await loadDms();
     updateTitleBadge();
     handleDeepLink();
   }
@@ -2462,6 +2809,8 @@
   async function selectGuild(id) {
     const g = state.guilds.find((x) => x.id === id);
     if (!g) return;
+    state.dmMode = false;
+    state.currentDm = null;
     state.currentGuild = g;
     state.currentChannel = null;
 
@@ -2509,8 +2858,12 @@
         renderVoiceConnected();
         voice.rebuildRoster();
         voice.syncControls();
+      } else if (voice.available()) {
+        // clicking a voice channel joins it directly (Discord-style) — no
+        // separate "Join Voice" step. join() leaves any current call first.
+        renderVoiceConnecting(c);
+        voice.join(c);
       } else {
-        // just previewing the channel (not connected, or connected elsewhere)
         renderVoiceIdle(c);
       }
       return;
@@ -2652,7 +3005,7 @@
       }
       chip.append(
         h("span", { class: "pname", text: f.name }),
-        h("button", { class: "remove", title: "Remove",
+        h("button", { class: "remove", "aria-label": "Remove",
           onclick: () => { pendingFiles.splice(i, 1); renderPending(); } }, icon("x", 16))
       );
       wrap.appendChild(chip);
@@ -2673,8 +3026,8 @@
       if (remain > 0) { toast("Slow mode — wait " + remain + "s"); return; }
     }
 
-    // Convert inserted @DisplayName drafts back into <@userId> mention tokens.
-    const content = convertMentions(raw);
+    // Convert @DisplayName drafts → <@userId>, and :shortcode: → emoji.
+    const content = convertEmojiShortcodes(convertMentions(raw));
 
     const channelId = state.currentChannel.id;
     const files = pendingFiles;
@@ -2848,6 +3201,7 @@
       currentChannel: null, messages: [], members: [], myRole: "member",
       presence: {}, replyingTo: null, editingId: null,
       readState: {}, newDivider: null, draftMentions: {},
+      dmMode: false, dms: [], currentDm: null,
     });
     renderReplyBar();
     clearTyping();
@@ -3257,13 +3611,14 @@
     for (const it of items) {
       if (!it) continue;
       if (it.separator) { menu.appendChild(h("div", { class: "ctx-sep" })); continue; }
+      if (it.info) { menu.appendChild(h("div", { class: "ctx-info" }, it.icon || null, h("span", { text: it.info }))); continue; }
       if (it.quickReactions) {
         const row = h("div", { class: "ctx-reactions" });
         for (const em of it.quickReactions) {
-          row.appendChild(h("button", { class: "ctx-react", title: em, text: em,
+          row.appendChild(h("button", { class: "ctx-react", "aria-label": em, text: em,
             onclick: () => { closePopover(); it.onPickEmoji(em); } }));
         }
-        row.appendChild(h("button", { class: "ctx-react more", title: "More emoji",
+        row.appendChild(h("button", { class: "ctx-react more", "aria-label": "More emoji",
           onclick: () => { closePopover(); it.onMore(); } }, icon("smile", 16)));
         menu.appendChild(row);
         continue;
@@ -3304,6 +3659,18 @@
 
   function amOwner(g) { return g && state.me && g.ownerId === state.me.id; }
 
+  // When will this message auto-delete? (7-day vanish, unless kept.)
+  const VANISH_MS = 7 * 24 * 3600 * 1000;
+  function vanishLabel(m) {
+    if (m.saved) return "Saved — won't vanish";
+    if (m.pinned) return "Pinned — won't vanish";
+    const left = new Date(m.createdAt).getTime() + VANISH_MS - Date.now();
+    if (left <= 0) return "Vanishing any moment…";
+    const d = Math.floor(left / 86400000), hh = Math.floor((left % 86400000) / 3600000), mm = Math.floor((left % 3600000) / 60000);
+    const span = d ? d + "d " + hh + "h" : (hh ? hh + "h " + mm + "m" : mm + "m");
+    return "Vanishes in " + span;
+  }
+
   function openMessageMenu(m, x, y) {
     const mine = state.me && m.authorId === state.me.id;
     const canDelete = mine || amAdmin();
@@ -3320,11 +3687,13 @@
       { label: "Copy Message Link", icon: icon("copy", 16), onClick: () => copyMessageLink(m) },
       { separator: true },
       canPin ? { label: m.pinned ? "Unpin Message" : "Pin Message", icon: icon("pin", 16), onClick: () => togglePin(m) } : null,
-      { label: m.saved ? "Remove Bookmark" : "Save Message", icon: icon("bookmark", 16), onClick: () => toggleSave(m) },
+      mine ? { label: m.saved ? "Remove Bookmark" : "Save Message", icon: icon("bookmark", 16), onClick: () => toggleSave(m) } : null,
       canDelete ? { separator: true } : null,
       canDelete ? { label: "Delete Message", icon: icon("trash", 16), danger: true, onClick: () => deleteMessage(m) } : null,
       { separator: true },
       { label: "Copy Message ID", icon: icon("copy", 16), onClick: () => copyText(m.id) },
+      { separator: true },
+      { info: vanishLabel(m), icon: icon("hourglass", 14) },
     ]);
   }
 
@@ -3336,6 +3705,7 @@
     const canModerate = amAdmin() && !isSelf && !isOwnerTarget && target;
     openContextMenu(x, y, [
       { label: "View Profile", icon: icon("user", 16), onClick: () => openProfileCard(userId, anchorEl) },
+      !isSelf ? { label: "Message", icon: icon("message-circle", 16), onClick: () => openDmWithUser(userId) } : null,
       !isSelf ? { label: "Mention", icon: icon("at-sign", 16), onClick: () => mentionUser(userId) } : null,
       canModerate ? { separator: true } : null,
       canModerate ? { label: target.role === "admin" ? "Remove Admin" : "Make Admin", icon: icon("shield", 16),
@@ -3466,13 +3836,13 @@
       }
       if (!list.length) { grid.appendChild(h("div", { class: "emoji-empty", text: "No emoji found" })); return; }
       for (const em of list) {
-        grid.appendChild(h("button", { class: "emoji-cell", title: em, text: em,
+        grid.appendChild(h("button", { class: "emoji-cell", "aria-label": em, text: em,
           onclick: () => { onPick(em); if (!opts.keepOpen) closePopover(); } }));
       }
     };
 
     for (const c of cats) {
-      const t = h("button", { class: "emoji-tab" + (c === activeCat ? " active" : ""), title: c, text: EMOJI_TAB_ICON[c] || "?",
+      const t = h("button", { class: "emoji-tab" + (c === activeCat ? " active" : ""), "aria-label": c, text: EMOJI_TAB_ICON[c] || "?",
         onclick: () => {
           activeCat = c; search.value = "";
           [...tabs.children].forEach((x) => x.classList.remove("active"));
@@ -3571,44 +3941,6 @@
     if (b) b.remove();
   }
 
-  // ---- Discord-style instant styled tooltips over any [data-tip] or [title] ----
-  // Reading `title` too means every existing button gets a styled tooltip for free;
-  // we lift the native title on hover (and restore on leave) to avoid a double bubble.
-  function setupTooltips() {
-    let tipEl = null, cur = null;
-    const ensure = () => (tipEl || (tipEl = document.body.appendChild(h("div", { class: "tooltip", role: "tooltip" }))));
-    const show = (el) => {
-      const text = el.getAttribute("data-tip") || el.getAttribute("title");
-      if (!text) return;
-      cur = el;
-      if (el.hasAttribute("title")) { el._savedTitle = el.getAttribute("title"); el.removeAttribute("title"); }
-      const t = ensure();
-      t.textContent = text; t.style.left = "-9999px"; t.classList.add("show");
-      const r = el.getBoundingClientRect(), tw = t.offsetWidth, th = t.offsetHeight;
-      let left = r.left + r.width / 2 - tw / 2, top = r.top - th - 9, place = "top";
-      if (top < 6) { top = r.bottom + 9; place = "bottom"; }
-      left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
-      t.style.left = Math.round(left) + "px"; t.style.top = Math.round(top) + "px";
-      t.setAttribute("data-place", place);
-    };
-    const hide = () => {
-      if (cur && cur._savedTitle != null) { cur.setAttribute("title", cur._savedTitle); delete cur._savedTitle; }
-      if (tipEl) tipEl.classList.remove("show");
-      cur = null;
-    };
-    document.addEventListener("mouseover", (e) => {
-      const el = e.target.closest && e.target.closest("[data-tip],[title]");
-      if (el && el !== cur) { hide(); show(el); }
-    });
-    document.addEventListener("mouseout", (e) => {
-      const el = e.target.closest && e.target.closest("[data-tip],[title]");
-      if (el && el === cur && !el.contains(e.relatedTarget)) hide();
-    });
-    document.addEventListener("mousedown", hide, true);
-    window.addEventListener("scroll", hide, true);
-    window.addEventListener("blur", hide);
-  }
-
   // ---- :emoji: shortcode autocomplete (mirrors @mention) ----
   let emojiAuto = null;
   let _emojiFlat = null;
@@ -3617,6 +3949,18 @@
     _emojiFlat = [];
     for (const cat in EMOJI) for (const [em, kw] of EMOJI[cat]) _emojiFlat.push({ em, kw, name: kw.split(" ")[0] });
     return _emojiFlat;
+  }
+  // :shortcode: -> emoji, auto-applied on send (Discord does this even without the picker)
+  let _emojiCodes = null;
+  function emojiCodes() {
+    if (_emojiCodes) return _emojiCodes;
+    _emojiCodes = {};
+    for (const e of emojiFlat()) for (const w of e.kw.split(" ")) if (!(w in _emojiCodes)) _emojiCodes[w] = e.em;
+    return _emojiCodes;
+  }
+  function convertEmojiShortcodes(text) {
+    const map = emojiCodes();
+    return text.replace(/:([a-z0-9_+-]{2,}):/gi, (m, name) => map[name.toLowerCase()] || m);
   }
   function currentEmojiQuery() {
     const input = $("composer-input");
@@ -4032,6 +4376,9 @@
     if (isMe) {
       info.appendChild(h("button", { class: "btn btn-secondary profile-edit-btn",
         onclick: () => renderProfileEdit(card, u, anchorEl) }, icon("pencil", 15), h("span", { text: " Edit profile" })));
+    } else {
+      info.appendChild(h("button", { class: "btn profile-edit-btn",
+        onclick: () => openDmWithUser(userId) }, icon("message-circle", 15), h("span", { text: " Message" })));
     }
 
     card.append(h("div", { class: "profile-banner" }), av, info);
@@ -4285,12 +4632,20 @@
       if (nearBottom) ackCurrentLatest();
     });
 
-    // members toggle
+    // members toggle — records an explicit preference that overrides the
+    // width-based auto default until the page reloads
     $("toggle-members-btn").addEventListener("click", () => {
       const col = $("member-column");
-      const btn = $("toggle-members-btn");
-      col.classList.toggle("hidden");
-      btn.classList.toggle("active", !col.classList.contains("hidden"));
+      const nowHidden = col.classList.toggle("hidden");
+      membersUserPref = !nowHidden;
+      $("toggle-members-btn").classList.toggle("active", !nowHidden);
+    });
+    // re-evaluate members visibility when the window resizes (auto mode hides
+    // them on screens too narrow to show them without cramping the chat)
+    let _membersResizeT;
+    window.addEventListener("resize", () => {
+      clearTimeout(_membersResizeT);
+      _membersResizeT = setTimeout(applyMembersVisibility, 150);
     });
     $("member-add-btn").addEventListener("click", addMember);
     $("member-add-input").addEventListener("keydown", (e) => { if (e.key === "Enter") addMember(); });
@@ -4316,7 +4671,6 @@
       if (e.code === media.pttKey) { e.preventDefault(); voice.pttUp(); }
     });
 
-    setupTooltips();
 
     // mobile back buttons -> reveal sidebar
     const back = () => $("content").classList.add("hide-mobile");
@@ -4328,6 +4682,19 @@
 
     // leave the call cleanly if the tab closes
     window.addEventListener("beforeunload", () => { if (voice.room) voice.leave(); });
+
+    // AFK inactivity auto-disconnect: any interaction resets the idle timer; a
+    // periodic check leaves the call once you've been idle past media.afkTimeoutMin
+    ["mousemove", "mousedown", "keydown", "touchstart", "wheel"].forEach((ev) =>
+      window.addEventListener(ev, afkBump, { passive: true }));
+    setInterval(afkCheck, 20000);
+
+    // (debug/test hook) report live mic transmit state
+    window.__voiceState = () => {
+      if (!voice.room) return null;
+      const p = voice.room.localParticipant.getTrackPublication(LK.Track.Source.Microphone);
+      return { others: voice.room.remoteParticipants.size, micMuted: !p || p.isMuted, intent: voice.mic };
+    };
 
     // deep links (#m/<channel>/<message>, #c/<channel>)
     window.addEventListener("hashchange", handleDeepLink);

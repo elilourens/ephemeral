@@ -93,7 +93,11 @@ public class MessageService {
     public MessageDto send(UUID userId, UUID channelId, String content, List<UUID> attachmentIds, UUID replyToId,
                            Boolean pingReply) {
         UUID guildId = guilds.requireChannelMember(userId, channelId);
-        // Messages are allowed in text AND voice channels (text-in-voice chat).
+        // Messages are allowed in text AND voice channels (text-in-voice chat) —
+        // storage channels hold files, not conversation.
+        if ("storage".equals(guilds.channelType(channelId))) {
+            throw ApiException.badRequest("storage channels don't take messages");
+        }
         // Slow mode: non-admins must wait between posts.
         int slow = guilds.slowModeOf(channelId);
         if (slow > 0 && !guilds.isAdmin(userId, guildId)) {

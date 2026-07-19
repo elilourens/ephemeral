@@ -27,6 +27,7 @@ only after this table says it's the right one.
 | `read/` | per-user `read_state` (last read id + mention counts), `POST /api/channels/{id}/ack` |
 | `realtime/ChatWebSocketHandler` | WS auth (`?token=`), inbound ops: subscribe(_guild), typing, voice_state |
 | `realtime/RealtimeService` | fan-out: guild events → guild subscribers; DM events → participants' user sessions; presence/voice → all |
+| `storagechannel/` | storage channels: folder tree of kept files (`storage_items`), member-owned deletes + audited admin override, recursive delete unlinks blobs, purge-exempt |
 | `search/SearchService` | Postgres FTS over `content_tsv`, viewer-scoped, `from:`/`in:`/`has:` filters |
 | `unfurl/SafeUrlFetcher` | SSRF guard: re-validates every redirect hop against private/reserved ranges |
 | `unfurl/UnfurlService` | OG/twitter-card parse (jsoup), 15-min cache → `GET /api/unfurl?url=` |
@@ -49,7 +50,8 @@ V1 users/guilds/channels/memberships/messages/attachments/saves · V2 profiles+r
 · V5 topic/slowmode/user_limit · V6 voice-message metadata · V7 DMs (`dm_members`,
 guild-less channels) · V8 `type='dm'` check · V9 encryption at rest (app-computed
 `content_tsv`, `has_link`) · V10 edit history · V11 per-channel `retention_ms`
-· V12 group DMs (`dm_owner_id`) + `guild_bans` + `audit_log`
+· V12 group DMs (`dm_owner_id`) + `guild_bans` + `audit_log` · V13 guild icons
+· V14 custom emoji · V15 avatars/banners/profile embeds · V16 storage channels
 
 ## Tests
 

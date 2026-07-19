@@ -784,3 +784,19 @@ admin-only viewer in the server menu, 30-day retention sweep.
 **Verified: 42/42 JUnit** (adds `groupDmLifecycle`, `bansKeepPeopleOut`,
 `auditLogRecordsModerationAndServerChanges`) + browser suites groupdm-check
 8/8 and groupcall-check 7/7 (0 JS errors).
+
+---
+
+## 25. Storage channels
+
+A third channel type: a **file locker** inside a server. `storage_items` (V16)
+forms a folder tree (10 deep max) whose files wrap normal encrypted uploads.
+Any member creates folders/uploads; owners rename/delete their own items,
+admins anything (audited as `storage.delete`); folder deletes are recursive
+and unlink every blob in the subtree immediately. Messages are rejected in
+storage channels. **The one deliberate exception to the 7-day vanish**: stored
+files persist while referenced (documented in the empty-state copy). Client:
+"Storage" sidebar group, breadcrumbed view with New Folder / Upload /
+drag-drop, hover + context actions, `storage_updated` realtime refresh.
+JUnit 47/47 (`storageChannelLifecycle`: permissions, recursion, blob cleanup,
+purge exemption); browser storage-check 6/6.

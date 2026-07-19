@@ -323,8 +323,8 @@ public class GuildService {
 
     public ChannelDto createChannel(UUID userId, UUID guildId, String name, String type, boolean adminOnly) {
         requireAdmin(userId, guildId);
-        if (!type.equals("text") && !type.equals("voice")) {
-            throw ApiException.badRequest("type must be 'text' or 'voice'");
+        if (!type.equals("text") && !type.equals("voice") && !type.equals("storage")) {
+            throw ApiException.badRequest("type must be 'text', 'voice' or 'storage'");
         }
         UUID id = Ids.newId();
         Integer nextPos = jdbc.queryForObject(

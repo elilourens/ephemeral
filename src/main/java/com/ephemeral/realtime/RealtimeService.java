@@ -174,6 +174,12 @@ public class RealtimeService {
                 "data", Map.of("channelId", channelId, "userId", user.id(), "name", user.displayName())), except);
     }
 
+    /** A storage channel's tree changed — open views refresh. */
+    public void storageUpdated(UUID channelId) {
+        broadcastGuild(guildOf(channelId), Map.of("type", "storage_updated",
+                "data", Map.of("channelId", channelId)), null);
+    }
+
     /** A DM conversation changed shape (created / member added / kicked / renamed / left). */
     public void dmUpdated(UUID channelId, java.util.Collection<UUID> memberIds) {
         sendToUsers(memberIds, Map.of("type", "dm_updated", "data", Map.of("channelId", channelId)));

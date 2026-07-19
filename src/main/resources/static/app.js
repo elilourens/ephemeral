@@ -266,6 +266,8 @@
     "arrow-down": '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
     copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
+    folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+    "folder-plus": '<path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     scroll: '<path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>',
     play: '<polygon points="6 3 20 12 6 21 6 3"/>',
     pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
@@ -487,6 +489,11 @@
     setGuildIcon: (id, attachmentId) => api(`/api/guilds/${id}/icon`, { method: "PUT", body: { attachmentId } }),
     addEmoji: (gid, name, attachmentId) => api(`/api/guilds/${gid}/emoji`, { method: "POST", body: { name, attachmentId } }),
     deleteEmoji: (gid, eid) => api(`/api/guilds/${gid}/emoji/${eid}`, { method: "DELETE" }),
+    storageList: (cid, parent) => api(`/api/channels/${cid}/storage` + (parent ? `?parent=${parent}` : "")),
+    storageAddFolder: (cid, name, parentId) => api(`/api/channels/${cid}/storage/folders`, { method: "POST", body: { name, parentId } }),
+    storageAddFile: (cid, attachmentId, parentId) => api(`/api/channels/${cid}/storage/files`, { method: "POST", body: { attachmentId, parentId } }),
+    storageRename: (id, name) => api(`/api/storage-items/${id}`, { method: "PATCH", body: { name } }),
+    storageDelete: (id) => api(`/api/storage-items/${id}`, { method: "DELETE" }),
     leaveGuild: (id) => api(`/api/guilds/${id}/leave`, { method: "POST" }),
     deleteGuild: (id) => api(`/api/guilds/${id}`, { method: "DELETE" }),
     createChannel: (gid, name, type, adminOnly) =>
@@ -753,6 +760,12 @@
           applyPresence();
           break;
         }
+        case "storage_updated":
+          if (state.currentChannel && state.currentChannel.id === d.channelId
+              && !$("storage-view").classList.contains("hidden")) {
+            renderStorageView(state.currentChannel);
+          }
+          break;
         case "dm_updated":
           // a conversation changed shape (created/renamed/member added/kicked/left)
           handleDmUpdated(d.channelId);
@@ -1570,6 +1583,137 @@
     },
   };
 
+  /* ---- storage channels: a folder tree of kept files ---- */
+  function storageParentId() {
+    const p = state.storagePath || [];
+    return p.length ? p[p.length - 1].id : null;
+  }
+  async function renderStorageView(c) {
+    const view = $("storage-view");
+    view.innerHTML = "";
+    const path = state.storagePath || [];
+    const canAdmin = amAdmin();
+
+    // header: breadcrumbs + actions
+    const crumbs = h("div", { class: "st-crumbs" });
+    const crumb = (label, depth) => h("button", { class: "st-crumb", text: label, onclick: () => {
+      state.storagePath = path.slice(0, depth);
+      renderStorageView(c);
+    } });
+    crumbs.appendChild(crumb(c.name, 0));
+    path.forEach((seg, i) => {
+      crumbs.appendChild(h("span", { class: "st-sep", text: "/" }));
+      crumbs.appendChild(crumb(seg.name, i + 1));
+    });
+    const file = h("input", { type: "file", class: "hidden", multiple: true });
+    file.addEventListener("change", async () => {
+      const files = [...(file.files || [])];
+      file.value = "";
+      for (const f of files) await storeFile(c, f);
+      renderStorageView(c);
+    });
+    const header = h("div", { class: "content-header st-header" },
+      h("span", { class: "glyph" }, icon("folder", 20)), crumbs,
+      h("button", { class: "btn btn-secondary", onclick: () => newFolderFlow(c) }, icon("folder-plus", 15), h("span", { text: " New Folder" })),
+      h("button", { class: "btn", onclick: () => file.click() }, icon("upload", 15), h("span", { text: " Upload" })),
+      file);
+
+    const list = h("div", { class: "st-list" },
+      h("div", { class: "search-hint", text: "Loading…" }));
+    view.append(header, list);
+
+    // drag & drop anywhere in the view
+    ["dragover", "drop"].forEach((ev) => view.addEventListener(ev, (e) => e.preventDefault()));
+    view.addEventListener("drop", async (e) => {
+      if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+      for (const f of [...e.dataTransfer.files]) await storeFile(c, f);
+      renderStorageView(c);
+    });
+
+    let items;
+    try { items = await API.storageList(c.id, storageParentId()); }
+    catch (e) { list.innerHTML = ""; list.appendChild(h("div", { class: "search-hint", text: e.message })); return; }
+    list.innerHTML = "";
+    if (!items.length) {
+      list.appendChild(h("div", { class: "st-empty" }, icon("folder", 40),
+        h("p", { text: "Nothing here yet. Upload files or create a folder — they stay until deleted." })));
+      return;
+    }
+    for (const it of items) {
+      const mine = state.me && it.ownerId === state.me.id;
+      const isFolder = it.kind === "folder";
+      const meta = [it.ownerName || "unknown",
+        !isFolder && it.sizeBytes != null ? prettySize(it.sizeBytes) : null,
+        relativeTime(it.createdAt)].filter(Boolean).join("  ·  ");
+      const row = h("div", { class: "st-row", onclick: () => {
+        if (isFolder) {
+          state.storagePath = [...path, { id: it.id, name: it.name }];
+          renderStorageView(c);
+        } else {
+          window.open(it.url, "_blank", "noopener");
+        }
+      } },
+        h("span", { class: "st-icon" }, icon(isFolder ? "folder" : "file", 20)),
+        h("div", { class: "st-name-wrap" },
+          h("div", { class: "st-name", text: it.name }),
+          h("div", { class: "st-meta", text: meta })),
+        (mine || canAdmin) ? h("button", { class: "st-del", "aria-label": "Delete",
+          onclick: async (e) => {
+            e.stopPropagation();
+            if (isFolder && !confirm("Delete the folder '" + it.name + "' and everything inside it?")) return;
+            try { await API.storageDelete(it.id); renderStorageView(c); }
+            catch (err) { toast(err.message, true); }
+          } }, icon("trash", 16)) : null);
+      row.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        openContextMenu(e.clientX, e.clientY, [
+          !isFolder ? { label: "Open", icon: icon("external-link", 16), onClick: () => window.open(it.url, "_blank", "noopener") } : null,
+          (mine || canAdmin) ? { label: "Rename", icon: icon("pencil", 16), onClick: () => renameStorageFlow(c, it) } : null,
+          (mine || canAdmin) ? { label: "Delete", icon: icon("trash", 16), danger: true, onClick: async () => {
+            try { await API.storageDelete(it.id); renderStorageView(c); } catch (err) { toast(err.message, true); }
+          } } : null,
+          { label: "Copy Link", icon: icon("copy", 16), onClick: () => copyText(location.origin + (it.url || "")) },
+        ].filter(Boolean));
+      });
+      list.appendChild(row);
+    }
+  }
+  async function storeFile(c, f) {
+    try {
+      const up = await API.upload(f);
+      await API.storageAddFile(c.id, up.id, storageParentId());
+    } catch (e) { toast(f.name + ": " + e.message, true); }
+  }
+  function newFolderFlow(c) {
+    const input = h("input", { class: "text-input", placeholder: "folder name", maxlength: "100" });
+    const err = h("div", { class: "modal-error" });
+    const submit = async () => {
+      try { await API.storageAddFolder(c.id, input.value.trim(), storageParentId()); closeModal(); renderStorageView(c); }
+      catch (e) { err.textContent = e.message; }
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    modal({ title: "New Folder", body: [input, err],
+      footer: [h("button", { class: "btn btn-secondary", text: "Cancel", onclick: closeModal }),
+        h("button", { class: "btn", text: "Create", onclick: submit })] });
+  }
+  function renameStorageFlow(c, it) {
+    const input = h("input", { class: "text-input", value: it.name, maxlength: "100" });
+    const err = h("div", { class: "modal-error" });
+    const submit = async () => {
+      try { await API.storageRename(it.id, input.value.trim()); closeModal(); renderStorageView(c); }
+      catch (e) { err.textContent = e.message; }
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    modal({ title: "Rename", body: [input, err],
+      footer: [h("button", { class: "btn btn-secondary", text: "Cancel", onclick: closeModal }),
+        h("button", { class: "btn", text: "Save", onclick: submit })] });
+  }
+  function prettySize(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1048576).toFixed(1) + " MB";
+  }
+
   /* =======================================================================
    * 5. RENDER LAYER
    * ===================================================================== */
@@ -1687,13 +1831,15 @@
     const channels = [...(g.channels || [])].sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
     const text = channels.filter((c) => c.type === "text");
     const voiceCh = channels.filter((c) => c.type === "voice");
+    const storageCh = channels.filter((c) => c.type === "storage");
 
     const group = (title, items, glyphName) => {
       const header = h("div", { class: "channel-group-header" }, h("span", { text: title }));
       if (amAdmin()) {
         header.appendChild(h("button", {
           "aria-label": "Create channel",
-          onclick: () => openCreateChannelModal(title === "Text Channels" ? "text" : "voice"),
+          onclick: () => openCreateChannelModal(
+            title === "Text Channels" ? "text" : title === "Storage" ? "storage" : "voice"),
         }, icon("plus", 18)));
       }
       list.appendChild(header);
@@ -1751,6 +1897,7 @@
 
     group("Text Channels", text, "hash");
     group("Voice Channels", voiceCh, "volume");
+    if (storageCh.length || amAdmin()) group("Storage", storageCh, "folder");
   }
 
   // ---- content view switching ----
@@ -1758,6 +1905,7 @@
     $("empty-view").classList.toggle("hidden", which !== "empty");
     $("chat-view").classList.toggle("hidden", which !== "chat");
     $("voice-view").classList.toggle("hidden", which !== "voice");
+    $("storage-view").classList.toggle("hidden", which !== "storage");
     // members column only makes sense in chat
     if (which !== "chat") $("member-column").classList.add("hidden");
   }
@@ -3209,6 +3357,14 @@
     // mobile: reveal content over the sidebar
     $("content").classList.remove("hide-mobile");
 
+    if (c.type === "storage") {
+      ws.unsubscribe();
+      clearTyping();
+      state.storagePath = [];
+      showView("storage");
+      renderStorageView(c);
+      return;
+    }
     if (c.type === "voice" && !voiceChatOpen[c.id]) {
       ws.unsubscribe();
       clearTyping();
@@ -3671,8 +3827,12 @@
     const err = h("div", { class: "modal-error" });
     const textBtn = h("button", { class: type === "text" ? "active" : "" }, icon("hash", 16), h("span", { text: "Text" }));
     const voiceBtn = h("button", { class: type === "voice" ? "active" : "" }, icon("volume", 16), h("span", { text: "Voice" }));
-    textBtn.onclick = () => { type = "text"; textBtn.classList.add("active"); voiceBtn.classList.remove("active"); };
-    voiceBtn.onclick = () => { type = "voice"; voiceBtn.classList.add("active"); textBtn.classList.remove("active"); };
+    const storageBtn = h("button", { class: type === "storage" ? "active" : "" }, icon("folder", 16), h("span", { text: "Storage" }));
+    const typeBtns = [textBtn, voiceBtn, storageBtn];
+    const pick = (t, btn) => { type = t; typeBtns.forEach((b) => b.classList.remove("active")); btn.classList.add("active"); };
+    textBtn.onclick = () => pick("text", textBtn);
+    voiceBtn.onclick = () => pick("voice", voiceBtn);
+    storageBtn.onclick = () => pick("storage", storageBtn);
     const adminCb = h("input", { type: "checkbox" });
     const adminRow = h("div", { class: "set-row set-toggle" },
       h("div", { class: "set-label" }, h("div", {}, icon("lock", 14), " Admin-only channel"),
@@ -3694,7 +3854,7 @@
     modal({
       title: "Create channel",
       body: [
-        h("label", {}, "Channel type", h("div", { class: "seg" }, textBtn, voiceBtn)),
+        h("label", {}, "Channel type", h("div", { class: "seg" }, textBtn, voiceBtn, storageBtn)),
         h("label", {}, "Channel name", input),
         adminRow,
         err,

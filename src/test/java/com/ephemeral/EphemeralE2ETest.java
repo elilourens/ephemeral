@@ -867,6 +867,72 @@ class EphemeralE2ETest {
     }
 
     @Test
+    void storageChannelLifecycle() throws Exception {
+        Session admin = register(uniqueName());
+        Session bob = register(uniqueName());
+        Session outsider = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Locker"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        UUID chan = UUID.fromString(call("POST", "/api/guilds/" + gid + "/channels", admin.token(),
+                Map.of("name", "vault", "type", "storage"), 200).get("id").asText());
+
+        // no chatting in the locker; outsiders shut out
+        call("POST", "/api/channels/" + chan + "/messages", admin.token(), Map.of("content", "hi"), 400);
+        call("GET", "/api/channels/" + chan + "/storage", outsider.token(), null, 403);
+
+        // bob (plain member) builds: folder at root, file inside it
+        UUID folder = UUID.fromString(call("POST", "/api/channels/" + chan + "/storage/folders",
+                bob.token(), Map.of("name", "memes"), 200).get("id").asText());
+        UUID up = uploadFile(bob.token(), "dank.txt", "meme content");
+        JsonNode file = call("POST", "/api/channels/" + chan + "/storage/files", bob.token(),
+                Map.of("attachmentId", up, "parentId", folder), 200);
+        assertThat(file.get("name").asText()).isEqualTo("dank.txt");
+        assertThat(file.get("url").asText()).isEqualTo("/api/files/" + up);
+
+        JsonNode root = call("GET", "/api/channels/" + chan + "/storage", admin.token(), null, 200);
+        assertThat(root).hasSize(1);
+        assertThat(root.get(0).get("kind").asText()).isEqualTo("folder");
+        JsonNode inFolder = call("GET", "/api/channels/" + chan + "/storage?parent=" + folder,
+                admin.token(), null, 200);
+        assertThat(inFolder.get(0).get("ownerName").asText()).isNotBlank();
+
+        // storage files DON'T vanish: an old bound file survives the purge
+        UUID oldAtt = Ids.boundary(Instant.now().minus(8, ChronoUnit.DAYS));
+        insertAttachment(oldAtt, null, bob.userId());
+        jdbc.update("insert into storage_items (id, channel_id, parent_id, owner_id, kind, name, attachment_id)"
+                        + " values (:id, :c, null, :o, 'file', 'keeper.txt', :a)",
+                Map.of("id", Ids.newId(), "c", chan, "o", bob.userId(), "a", oldAtt));
+        retention.purgeExpired();
+        assertThat(jdbc.queryForObject("select count(*) from attachments where id = :a",
+                Map.of("a", oldAtt), Integer.class)).isEqualTo(1);
+
+        // a third member can't touch bob's stuff; bob can't touch... nothing here of admin's
+        Session carol = register(uniqueName());
+        call("POST", "/api/guilds/" + gid + "/join", carol.token(), null, 200);
+        UUID fileId = UUID.fromString(file.get("id").asText());
+        call("DELETE", "/api/storage-items/" + fileId, carol.token(), null, 403);
+        // bob renames + deletes his own file — attachment row and blob go too
+        call("PATCH", "/api/storage-items/" + fileId, bob.token(), Map.of("name", "dankest.txt"), 200);
+        call("DELETE", "/api/storage-items/" + fileId, bob.token(), null, 200);
+        assertThat(jdbc.queryForObject("select count(*) from attachments where id = :a",
+                Map.of("a", up), Integer.class)).isZero();
+
+        // admin recursively deletes bob's folder tree (with a nested file) — audited
+        UUID up2 = uploadFile(bob.token(), "nested.txt", "bye");
+        call("POST", "/api/channels/" + chan + "/storage/files", bob.token(),
+                Map.of("attachmentId", up2, "parentId", folder), 200);
+        call("DELETE", "/api/storage-items/" + folder, admin.token(), null, 200);
+        assertThat(jdbc.queryForObject("select count(*) from storage_items where channel_id = :c and id <> :k",
+                new MapSqlParameterSource().addValue("c", chan).addValue("k", oldAtt), Integer.class))
+                .isLessThanOrEqualTo(1); // only the backdated keeper remains
+        assertThat(jdbc.queryForObject("select count(*) from attachments where id = :a",
+                Map.of("a", up2), Integer.class)).isZero();
+        assertThat(call("GET", "/api/guilds/" + gid + "/audit-log", admin.token(), null, 200)
+                .findValuesAsText("action")).contains("storage.delete");
+    }
+
+    @Test
     void profileAvatarBannerAndEmbed() throws Exception {
         Session s = register(uniqueName());
         Session other = register(uniqueName());

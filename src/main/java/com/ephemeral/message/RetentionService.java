@@ -52,7 +52,8 @@ public class RetentionService {
                 + " and id not in (select icon_id from guilds where icon_id is not null)"
                 + " and id not in (select attachment_id from guild_emoji)"
                 + " and id not in (select avatar_id from users where avatar_id is not null)"
-                + " and id not in (select banner_id from users where banner_id is not null)";
+                + " and id not in (select banner_id from users where banner_id is not null)"
+                + " and id not in (select attachment_id from storage_items where attachment_id is not null)";
         List<String> orphanKeys = jdbc.queryForList(
                 "select storage_key from attachments where" + orphanCond,
                 Map.of("b", boundary), String.class);

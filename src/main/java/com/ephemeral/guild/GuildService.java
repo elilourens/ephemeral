@@ -21,7 +21,7 @@ public class GuildService {
     private final NamedParameterJdbcTemplate jdbc;
 
     private static final String CHANNEL_COLS =
-            "id, guild_id, name, type, position, admin_only, topic, slow_mode_seconds, user_limit";
+            "id, guild_id, name, type, position, admin_only, topic, slow_mode_seconds, user_limit, retention_ms";
     private static final RowMapper<ChannelDto> CHANNEL_MAPPER = (rs, i) -> new ChannelDto(
             rs.getObject("id", UUID.class),
             rs.getObject("guild_id", UUID.class),
@@ -31,7 +31,8 @@ public class GuildService {
             rs.getBoolean("admin_only"),
             rs.getString("topic"),
             rs.getInt("slow_mode_seconds"),
-            rs.getInt("user_limit"));
+            rs.getInt("user_limit"),
+            (Long) rs.getObject("retention_ms"));
 
     public GuildService(NamedParameterJdbcTemplate jdbc) {
         this.jdbc = jdbc;
@@ -236,11 +237,17 @@ public class GuildService {
 
     /** Update a channel's editable settings (admin only). Null fields are left unchanged. */
     public ChannelDto updateChannel(UUID userId, UUID channelId, String name, String topic,
-                                    Integer slowModeSeconds, Integer userLimit) {
+                                    Integer slowModeSeconds, Integer userLimit, Long retentionMs) {
         UUID guildId = guildIdOfChannel(channelId);
         requireAdmin(userId, guildId);
         MapSqlParameterSource p = new MapSqlParameterSource().addValue("c", channelId);
         java.util.List<String> sets = new java.util.ArrayList<>();
+        if (retentionMs != null) {
+            // 0 = back to the instance default; else clamp to 1 minute .. 30 days
+            sets.add("retention_ms = :ret");
+            p.addValue("ret", retentionMs == 0 ? null
+                    : Math.max(60_000L, Math.min(30L * 86_400_000L, retentionMs)));
+        }
         if (name != null) {
             String n = name.trim();
             if (n.isEmpty() || n.length() > 100) {
@@ -272,7 +279,7 @@ public class GuildService {
     }
 
     public ChannelDto renameChannel(UUID userId, UUID channelId, String name) {
-        return updateChannel(userId, channelId, name, null, null, null);
+        return updateChannel(userId, channelId, name, null, null, null, null);
     }
 
     /** Toggle a channel's admin-only visibility. */

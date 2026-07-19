@@ -805,6 +805,37 @@ class EphemeralE2ETest {
     }
 
     @Test
+    void perChannelVanishTimerOverridesDefault() throws Exception {
+        Session s = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", s.token(), Map.of("name", "Timers"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID fast = channelOfType(guild, "text");
+        UUID slow = UUID.fromString(call("POST", "/api/guilds/" + gid + "/channels", s.token(),
+                Map.of("name", "slow", "type", "text"), 200).get("id").asText());
+
+        JsonNode updated = call("PATCH", "/api/channels/" + fast, s.token(), Map.of("retentionMs", 3600000), 200);
+        assertThat(updated.get("retentionMs").asLong()).isEqualTo(3600000L);
+
+        // two-hour-old messages: past the fast channel's 1h window, well inside the 7d default
+        Instant twoHoursAgo = Instant.now().minus(2, ChronoUnit.HOURS);
+        UUID doomed = Ids.boundary(twoHoursAgo);
+        UUID kept = Ids.boundary(twoHoursAgo.plusMillis(1));
+        insertMessage(doomed, fast, s.userId(), "dies at 1h", false);
+        insertMessage(kept, slow, s.userId(), "lives for 7d", false);
+
+        retention.purgeExpired();
+
+        assertThat(call("GET", "/api/channels/" + fast + "/messages", s.token(), null, 200)
+                .findValuesAsText("id")).doesNotContain(doomed.toString());
+        assertThat(call("GET", "/api/channels/" + slow + "/messages", s.token(), null, 200)
+                .findValuesAsText("id")).contains(kept.toString());
+
+        // retentionMs = 0 resets the channel to the instance default
+        assertThat(call("PATCH", "/api/channels/" + fast, s.token(), Map.of("retentionMs", 0), 200)
+                .get("retentionMs").isNull()).isTrue();
+    }
+
+    @Test
     void mentionsInboxListsMyPings() throws Exception {
         Session admin = register(uniqueName());
         Session bob = register(uniqueName());

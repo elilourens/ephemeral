@@ -14,6 +14,7 @@ node e2e/ui-check.mjs     # auth, chat, markdown, hover toolbar, context menus, 
 node e2e/qol-check.mjs    # day dividers, code copy, ArrowUp-edit, Ctrl+K switcher, privacy tab
 node e2e/dm-check.mjs      # two browsers: DM by username, live delivery, unread badge
 node e2e/history-check.mjs # edit twice, click (edited), history modal shows versions
+node e2e/retention-check.mjs # admin sets a 1-hour vanish timer; pill + toast reflect it
 ```
 
 Each suite prints `PASS`/`FAIL` per check and `RESULT n/m`; a non-zero exit

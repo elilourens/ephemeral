@@ -40,7 +40,7 @@ public class GuildController {
     public record RenameRequest(@NotBlank String name) {
     }
 
-    public record UpdateChannelRequest(String name, String topic, Integer slowModeSeconds, Integer userLimit) {
+    public record UpdateChannelRequest(String name, String topic, Integer slowModeSeconds, Integer userLimit, Long retentionMs) {
     }
 
     @PostMapping("/api/guilds")
@@ -95,7 +95,7 @@ public class GuildController {
     @PatchMapping("/api/channels/{id}")
     public ChannelDto updateChannel(@CurrentUser AuthUser user, @PathVariable UUID id,
                                     @RequestBody UpdateChannelRequest req) {
-        return guilds.updateChannel(user.id(), id, req.name(), req.topic(), req.slowModeSeconds(), req.userLimit());
+        return guilds.updateChannel(user.id(), id, req.name(), req.topic(), req.slowModeSeconds(), req.userLimit(), req.retentionMs());
     }
 
     @PutMapping("/api/channels/{id}/admin-only")

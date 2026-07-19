@@ -49,7 +49,9 @@ deletes by primary-key range — `DELETE FROM messages WHERE id < boundary AND
 saved = false` — index-only and cheap, cascading to attachments and their
 on-disk blobs (with an orphan-blob reconciliation sweep as backstop). Saving
 sets `saved = true` and only the **author** can save their own message — nobody
-else can exempt your words from deletion. Deletion is physical, not a soft hide.
+else can exempt your words from deletion. Admins can give any channel its own
+vanish timer (1 hour – 30 days, Signal-style) overriding the instance default.
+Deletion is physical, not a soft hide.
 
 ## What's encrypted
 

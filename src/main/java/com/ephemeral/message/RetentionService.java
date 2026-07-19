@@ -34,29 +34,46 @@ public class RetentionService {
 
     /** @return number of messages deleted. */
     public int purgeExpired() {
-        Instant cutoff = Instant.now().minus(props.getRetention());
-        UUID boundary = Ids.boundary(cutoff);
+        int messages = 0;
+        // channels with a custom vanish timer purge on their own boundary
+        for (Long ms : jdbc.queryForList(
+                "select distinct retention_ms from channels where retention_ms is not null",
+                Map.of(), Long.class)) {
+            messages += purgeChannels("c.retention_ms = :ms",
+                    Map.of("ms", ms, "b", Ids.boundary(Instant.now().minusMillis(ms))));
+        }
+        // everything else (incl. DMs) uses the instance default
+        UUID boundary = Ids.boundary(Instant.now().minus(props.getRetention()));
+        messages += purgeChannels("c.retention_ms is null", Map.of("b", boundary));
 
-        // blobs of expiring messages + never-bound uploads older than the window
-        List<String> keys = jdbc.queryForList("""
-                select storage_key from attachments a
-                where (a.message_id is not null
-                       and a.message_id in (select id from messages where id < :b and saved = false and pinned = false))
-                   or (a.message_id is null and a.id < :b)
-                """, Map.of("b", boundary), String.class);
-
-        int messages = jdbc.update(
-                "delete from messages where id < :b and saved = false and pinned = false", Map.of("b", boundary));
+        // never-bound uploads age out on the default window
+        List<String> orphanKeys = jdbc.queryForList(
+                "select storage_key from attachments where message_id is null and id < :b",
+                Map.of("b", boundary), String.class);
         int orphanUploads = jdbc.update(
                 "delete from attachments where message_id is null and id < :b", Map.of("b", boundary));
-
-        storage.deleteAll(keys);
+        storage.deleteAll(orphanKeys);
 
         if (messages > 0 || orphanUploads > 0) {
-            log.info("retention purge: {} messages, {} orphan uploads, {} files removed",
-                    messages, orphanUploads, keys.size());
+            log.info("retention purge: {} messages, {} orphan uploads", messages, orphanUploads);
         }
         return messages;
+    }
+
+    /** Deletes expired, unsaved, unpinned messages in channels matching the condition (+ their blobs). */
+    private int purgeChannels(String channelCond, Map<String, ?> params) {
+        List<String> keys = jdbc.queryForList("""
+                select a.storage_key from attachments a
+                join messages m on m.id = a.message_id
+                join channels c on c.id = m.channel_id
+                where m.id < :b and m.saved = false and m.pinned = false
+                """ + " and " + channelCond, params, String.class);
+        int n = jdbc.update("""
+                delete from messages m using channels c
+                where c.id = m.channel_id and m.id < :b and m.saved = false and m.pinned = false
+                """ + " and " + channelCond, params);
+        storage.deleteAll(keys);
+        return n;
     }
 
     /**

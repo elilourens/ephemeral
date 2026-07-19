@@ -1894,9 +1894,10 @@
       authorSpan.addEventListener("contextmenu", (e) => {
         e.preventDefault(); e.stopPropagation(); openUserMenu(m.authorId, e.clientX, e.clientY, authorSpan);
       });
-      // trust affordance: within 24h of deletion, show the countdown inline
-      const left = new Date(m.createdAt).getTime() + VANISH_MS - Date.now();
-      const soon = !m.saved && !m.pinned && left < 86400000;
+      // trust affordance: near deletion (24h, or ¼ of a short window), show the countdown
+      const win = channelVanishMs();
+      const left = new Date(m.createdAt).getTime() + win - Date.now();
+      const soon = !m.saved && !m.pinned && left < Math.min(86400000, win / 4);
       body.appendChild(h("div", { class: "meta" },
         authorSpan,
         h("span", { class: "time", text: relativeTime(m.createdAt) }),
@@ -2760,6 +2761,7 @@
   }
 
   function renderDmHeader(dm) {
+    updateVanishPill();
     const el = $("chat-channel-name");
     el.innerHTML = "";
     const av = avatar(dm.other.displayName || dm.other.username, dm.other.id, "sm");
@@ -2955,7 +2957,38 @@
 
   // Chat header: channel glyph + name, plus the topic (click to expand). For a
   // voice channel's text chat, a "Show Call" toggle returns to the call view.
+  // The header pill reflects the ACTIVE channel's vanish window.
+  function updateVanishPill() {
+    const el = $("vanish-pill-text");
+    if (el) el.textContent = "vanish in " + vanishSpanLabel(channelVanishMs());
+  }
+
+  // Admin: set this channel's auto-delete timer (Signal-style, per channel).
+  function openRetentionModal(c) {
+    const OPTIONS = [["1 hour", 3600000], ["1 day", 86400000], ["7 days", 604800000],
+      ["30 days", 2592000000], ["Instance default", 0]];
+    const current = c.retentionMs || 0;
+    const rows = OPTIONS.map(([label, ms]) => h("button", {
+      class: "qs-item" + ((current === ms || (!c.retentionMs && ms === 0)) ? " active" : ""),
+      onclick: async () => {
+        try {
+          const updated = await API.updateChannel(c.id, { retentionMs: ms });
+          Object.assign(c, updated);
+          closeModal(); renderChannels(); updateVanishPill();
+          toast("Messages in #" + c.name + " now vanish after " + vanishSpanLabel(ms || VANISH_MS));
+        } catch (e) { toast(e.message, true); }
+      },
+    }, icon("hourglass", 15), h("span", { class: "qs-name", text: label })));
+    modal({
+      title: "Auto-Delete Timer — #" + c.name,
+      subtitle: "Messages older than the window are physically deleted on the next sweep — shortening it deletes older history.",
+      body: rows,
+      footer: [h("button", { class: "btn btn-secondary", text: "Cancel", onclick: closeModal })],
+    });
+  }
+
   function renderChannelHeader(c) {
+    updateVanishPill();
     const el = $("chat-channel-name");
     el.innerHTML = "";
     const glyph = c.type === "voice" ? "volume" : (c.adminOnly ? "lock" : "hash");
@@ -3732,12 +3765,19 @@
 
   function amOwner(g) { return g && state.me && g.ownerId === state.me.id; }
 
-  // When will this message auto-delete? (7-day vanish, unless kept.)
+  // When will this message auto-delete? (7-day default; channels can override.)
   const VANISH_MS = 7 * 24 * 3600 * 1000;
+  const channelVanishMs = () =>
+    (state.currentChannel && state.currentChannel.retentionMs) || VANISH_MS;
+  function vanishSpanLabel(ms) {
+    const h = Math.round(ms / 3600000);
+    return h < 24 ? h + (h === 1 ? " hour" : " hours")
+        : Math.round(h / 24) + (Math.round(h / 24) === 1 ? " day" : " days");
+  }
   function vanishLabel(m) {
     if (m.saved) return "Saved — won't vanish";
     if (m.pinned) return "Pinned — won't vanish";
-    const left = new Date(m.createdAt).getTime() + VANISH_MS - Date.now();
+    const left = new Date(m.createdAt).getTime() + channelVanishMs() - Date.now();
     if (left <= 0) return "Vanishing any moment…";
     const d = Math.floor(left / 86400000), hh = Math.floor((left % 86400000) / 3600000), mm = Math.floor((left % 3600000) / 60000);
     const span = d ? d + "d " + hh + "h" : (hh ? hh + "h " + mm + "m" : mm + "m");
@@ -3800,6 +3840,7 @@
         onClick: () => toggleMute(c.id) } : null,
       isText ? { separator: true } : null,
       amAdmin() ? { label: "Edit Channel", icon: icon("settings", 16), onClick: () => renameChannelFlow(c) } : null,
+      amAdmin() ? { label: "Auto-Delete Timer…", icon: icon("hourglass", 16), onClick: () => openRetentionModal(c) } : null,
       amAdmin() ? { label: c.adminOnly ? "Make Public" : "Make Admin-Only", icon: icon(c.adminOnly ? "lock-open" : "lock", 16),
         onClick: () => toggleChannelAdminOnly(c) } : null,
       { label: "Copy Link", icon: icon("copy", 16), onClick: () => copyText(location.origin + "/#c/" + c.id) },

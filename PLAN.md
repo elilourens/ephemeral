@@ -731,3 +731,16 @@ still work, legacy plaintext passthrough) and the author-only save rule.
   "(edited)"; `GET /api/mentions` + a header @ button list every ping,
   membership-scoped, admin-only channels never leak.
 - **37/37 JUnit**; browser suites ui/qol/dm/history all green.
+
+---
+
+## 23. Per-channel vanish timers (Signal-style)
+
+`channels.retention_ms` (V11, null = instance default, clamped 1 min–30 days)
+overrides the purge window per channel: `RetentionService` now deletes per
+distinct override boundary plus the default sweep (DMs stay on the default).
+Admin UI: channel right-click → "Auto-Delete Timer…" (1 h / 1 d / 7 d / 30 d /
+default); the header pill, inline countdowns, and vanish labels all follow the
+active channel's window. Shortening a timer really deletes older history on the
+next sweep (stated in the dialog). **38/38 JUnit** (adds override + reset
+coverage); browser suite `retention-check` 4/4.

@@ -701,3 +701,28 @@ removed (labels live on as `aria-label`s).
 **Verified:** 35/35 JUnit — adds `everythingIsEncryptedAtRest` (ciphertext in
 DB + on disk with correct Content-Length, plaintext over API, FTS + `has:link`
 still work, legacy plaintext passthrough) and the author-only save rule.
+
+---
+
+## 22. Dogfooding wave: QoL features, e2e-in-repo, DM realtime fix
+
+- **QoL (researched against Discord user complaints + chat-UI best practice):**
+  day separators, ArrowUp-to-edit, code-block copy button, Ctrl/Cmd+K quick
+  switcher, typing-indicator privacy toggle + notification-sound toggle
+  (new "Chat & Privacy" settings tab), inline "vanishes in…" countdown on
+  messages within 24 h of deletion. Hover toolbar slimmed to react/reply/more;
+  duplicate hover admin buttons removed (context menus keep everything);
+  tooltips gone app-wide.
+- **e2e suites now live in the repo** (`e2e/*.mjs` + README) — earlier sessions'
+  browser tests were never committed and evaporated. Suites: ui-check,
+  qol-check (10/10), dm-check (4/4).
+- **Real bug (found by dm-check):** the first message of a brand-new DM never
+  reached the recipient live — clients only subscribe to DM channels known at
+  login. DM events now fan out to each participant's **user sessions**
+  (`RealtimeService.userSessions`, `GuildService.dmMemberIds` cached), and the
+  client refreshes its DM list when an event references an unknown channel.
+- **Deploy verification:** compose `LIVEKIT_CONFIG`-via-env mechanism proven
+  against a real `livekit-server` 1.9.1 (`/rtc/validate` 200 for an app-minted
+  token, 401 for garbage). `docs/CODEMAP.md` added — grep-oriented index of
+  every package/file for humans + AI agents.
+- **35/35 JUnit** after the realtime change.

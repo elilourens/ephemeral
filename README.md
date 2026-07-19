@@ -10,6 +10,7 @@ from a single `docker compose up`.
 - [DEPLOY.md](DEPLOY.md) — hosting it for your friends (Tailscale / VPS + TLS / LAN)
 - [PLAN.md](PLAN.md) — full design, research, and the verification log
 - [docs/UI.md](docs/UI.md) — the liquid-glass UI design notes
+- [docs/CODEMAP.md](docs/CODEMAP.md) — grep-oriented index of the whole codebase
 
 ## Stack
 

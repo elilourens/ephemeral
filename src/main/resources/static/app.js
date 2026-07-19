@@ -323,7 +323,7 @@
     document.querySelectorAll("[data-presence]").forEach((el) => {
       const st = presenceState(state.presence[el.dataset.presence]);
       el.className = "status-dot " + st;
-      el.title = statusLabel(st);
+      el.setAttribute("aria-label", statusLabel(st));
     });
   }
   function ensureMyPresence() {
@@ -1582,7 +1582,7 @@
     rail.innerHTML = "";
     // Home / Direct Messages sits above the servers (like Discord's home button).
     const dmUnread = dmUnreadCount();
-    const home = h("div", { class: "guild-icon action dm-home", "data-tip": "Direct Messages", onclick: enterDmMode },
+    const home = h("div", { class: "guild-icon action dm-home", "aria-label": "Direct Messages", onclick: enterDmMode },
       icon("message-circle", 24));
     const homeSlot = h("div", { class: "guild-slot" + (state.dmMode ? " active" : "") + (dmUnread ? " unread" : "") },
       h("span", { class: "guild-pill" }), home);
@@ -1657,7 +1657,7 @@
         },
           h("span", { class: "glyph" }, icon(mutedChan ? "bell-off" : glyphName, 18)),
           h("span", { class: "name", text: c.name }),
-          c.adminOnly ? h("span", { class: "chan-lock", "data-tip": "Admin-only channel" }, icon("lock", 13)) : null
+          c.adminOnly ? h("span", { class: "chan-lock", "aria-label": "Admin-only channel" }, icon("lock", 13)) : null
         );
         // voice channel capacity "n/limit"
         if (c.type === "voice" && c.userLimit > 0) {
@@ -1666,14 +1666,7 @@
         }
         if (unread) row.insertBefore(h("span", { class: "unread-dot" }), row.firstChild);
         if (mc > 0) row.appendChild(h("span", { class: "mention-badge", text: mc > 99 ? "99+" : String(mc) }));
-        if (amAdmin()) {
-          row.appendChild(h("div", { class: "chan-actions" },
-            h("button", { class: "chan-act", "aria-label": "Edit channel",
-              onclick: (e) => { e.stopPropagation(); renameChannelFlow(c); } }, icon("pencil", 14)),
-            h("button", { class: "chan-act chan-delete", "aria-label": "Delete channel",
-              onclick: (e) => { e.stopPropagation(); deleteChannel(c); } }, icon("x", 15))
-          ));
-        }
+        // admin edit/delete live in the right-click menu — no hover buttons
         row.addEventListener("contextmenu", (e) => {
           e.preventDefault(); openChannelMenu(c, e.clientX, e.clientY);
         });
@@ -1843,18 +1836,13 @@
       }
     }
 
-    // hover action toolbar — aria-label (not title) so no tooltip pops on hover
+    // hover action toolbar: just react / reply / more — everything else
+    // (edit, pin, save, delete, copy) lives in the More / right-click menu
     const actBtn = (ic, label, cls, onclick) => h("button", { class: cls || "", "aria-label": label, onclick }, ic);
     const actions = h("div", { class: "msg-actions" },
       actBtn(icon("smile", 16), "Add reaction", "",
         (e) => openEmojiPicker(e.currentTarget, (emoji) => reactWith(m, emoji))),
       actBtn(icon("reply", 16), "Reply", "", () => startReply(m)),
-      mine ? actBtn(icon("pencil", 16), "Edit", "", () => startEdit(m)) : null,
-      canPin ? actBtn(icon("pin", 16, m.pinned), m.pinned ? "Unpin" : "Pin",
-        m.pinned ? "starred" : "", () => togglePin(m)) : null,
-      mine ? actBtn(icon("bookmark", 16, m.saved), m.saved ? "Un-save (let it expire)" : "Save forever",
-        m.saved ? "starred" : "", () => toggleSave(m)) : null,
-      canDelete ? actBtn(icon("trash", 16), "Delete", "del", () => deleteMessage(m)) : null,
       actBtn(icon("more-horizontal", 16), "More", "",
         (e) => { const r = e.currentTarget.getBoundingClientRect(); openMessageMenu(m, r.right, r.bottom); }),
     );
@@ -2402,8 +2390,8 @@
     const dot = h("span", { class: "rec-dot" });
     const time = h("span", { class: "rec-time", text: "0:00" });
     const canvas = h("canvas", { class: "rec-meter" });
-    const cancel = h("button", { class: "rec-btn cancel", "data-tip": "Cancel", onclick: () => finishVoiceRecording(false) }, icon("trash", 16));
-    const send = h("button", { class: "rec-btn send", "data-tip": "Send voice message", onclick: () => finishVoiceRecording(true) }, icon("send", 16));
+    const cancel = h("button", { class: "rec-btn cancel", "aria-label": "Cancel", onclick: () => finishVoiceRecording(false) }, icon("trash", 16));
+    const send = h("button", { class: "rec-btn send", "aria-label": "Send voice message", onclick: () => finishVoiceRecording(true) }, icon("send", 16));
     bar.append(dot, time, canvas, cancel, send);
     // live meter (respect reduced-motion)
     const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -2489,18 +2477,7 @@
         e.preventDefault(); openUserMenu(m.userId, e.clientX, e.clientY, row);
       });
       if (m.role === "admin") row.appendChild(h("span", { class: "role-badge admin", text: "admin" }));
-
-      // admin controls (can't act on self)
-      if (amAdmin() && !isMe) {
-        const acts = h("div", { class: "m-actions" });
-        if (m.role === "member") {
-          acts.appendChild(h("button", { "aria-label": "Promote to admin", onclick: () => changeRole(m, "admin") }, icon("chevron-up", 16)));
-        } else {
-          acts.appendChild(h("button", { "aria-label": "Demote to member", onclick: () => changeRole(m, "member") }, icon("chevron-down", 16)));
-        }
-        acts.appendChild(h("button", { "aria-label": "Kick", onclick: () => kickMember(m) }, icon("x", 16)));
-        row.appendChild(acts);
-      }
+      // admin promote/demote/kick live in the right-click menu — no hover buttons
       list.appendChild(row);
     }
     applyMembersVisibility();
@@ -2530,12 +2507,12 @@
     if (channel.dm) {
       const av = avatar(channel.name, channel.other && channel.other.id, "sm");
       el.append(av, h("span", { class: "ch-name", text: channel.name }),
-        h("button", { class: "ch-toggle", "data-tip": "Back to messages",
+        h("button", { class: "ch-toggle", "aria-label": "Back to messages",
           onclick: () => { if (state.currentDm) selectDm(state.currentDm); } }, icon("hash", 15), h("span", { text: "Chat" })));
       return;
     }
     el.append(h("span", { class: "glyph" }, icon("volume", 20)), h("span", { class: "ch-name", text: channel.name }),
-      h("button", { class: "ch-toggle", "data-tip": "Open text chat",
+      h("button", { class: "ch-toggle", "aria-label": "Open text chat",
         onclick: () => { voiceChatOpen[channel.id] = true; selectChannel(channel.id); } }, icon("hash", 15), h("span", { text: "Chat" })));
   }
   // Brief "Connecting…" pane shown while auto-joining a voice channel on click.
@@ -2657,7 +2634,7 @@
     const list = $("channel-list");
     list.innerHTML = "";
     const head = h("div", { class: "channel-group-header" }, h("span", { text: "Direct Messages" }),
-      h("button", { "data-tip": "New DM", onclick: openNewDmModal }, icon("plus", 18)));
+      h("button", { "aria-label": "New DM", onclick: openNewDmModal }, icon("plus", 18)));
     list.appendChild(head);
     const dms = state.dms || [];
     if (!dms.length) {
@@ -2700,8 +2677,8 @@
     const av = avatar(dm.other.displayName || dm.other.username, dm.other.id, "sm");
     av.classList.add("has-status"); av.appendChild(statusDot(dm.other.id));
     el.append(av, h("span", { class: "ch-name", text: dm.other.displayName || dm.other.username }),
-      h("button", { class: "ch-call", "data-tip": "Start voice call", onclick: () => startDmCall(false) }, icon("phone", 17)),
-      h("button", { class: "ch-call", "data-tip": "Start video call", onclick: () => startDmCall(true) }, icon("video", 17)));
+      h("button", { class: "ch-call", "aria-label": "Start voice call", onclick: () => startDmCall(false) }, icon("phone", 17)),
+      h("button", { class: "ch-call", "aria-label": "Start video call", onclick: () => startDmCall(true) }, icon("video", 17)));
   }
 
   async function startDmCall(video) {
@@ -2889,12 +2866,12 @@
     const glyph = c.type === "voice" ? "volume" : (c.adminOnly ? "lock" : "hash");
     el.append(h("span", { class: "glyph" }, icon(glyph, 20)), h("span", { class: "ch-name", text: c.name }));
     if (c.type === "voice") {
-      el.append(h("button", { class: "ch-toggle", "data-tip": "Show call",
+      el.append(h("button", { class: "ch-toggle", "aria-label": "Show call",
         onclick: () => { voiceChatOpen[c.id] = false; selectChannel(c.id); } }, icon("volume", 15), h("span", { text: "Call" })));
     }
     if (c.topic) {
       el.append(h("span", { class: "ch-topic-sep" }),
-        h("span", { class: "ch-topic", text: c.topic, "data-tip": "Click to view the full topic",
+        h("span", { class: "ch-topic", text: c.topic, "aria-label": "Click to view the full topic",
           onclick: () => openTopicModal(c) }));
     }
   }

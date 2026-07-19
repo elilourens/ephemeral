@@ -278,16 +278,6 @@ button .icon { pointer-events: none; }
 .channel.active .glyph { color: var(--accent); }
 .channel .glyph { color: var(--text-faint); opacity: .85; flex-shrink: 0; display: inline-flex; }
 .channel .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.channel .chan-actions { display: flex; align-items: center; gap: 1px; flex-shrink: 0; margin-left: 2px; }
-.channel .chan-act {
-  opacity: 0; color: var(--text-faint); display: grid; place-items: center;
-  width: 20px; height: 20px; border-radius: var(--r-sm); flex-shrink: 0;
-  transition: opacity .12s, color .12s, background .12s;
-}
-.channel:hover .chan-act { opacity: .75; }
-.channel .chan-act:hover { opacity: 1; color: var(--text); background: var(--active); }
-.channel .chan-act.chan-delete:hover { color: var(--danger); }
-
 /* connected voice participants, indented under a voice channel row */
 .voice-presence { display: flex; flex-direction: column; gap: 1px; margin: 0 0 4px; padding-left: 22px; }
 .voice-presence-user {
@@ -481,8 +471,6 @@ button .icon { pointer-events: none; }
 .message:hover .msg-actions { display: flex; }
 .msg-actions button { display: grid; place-items: center; width: 32px; height: 30px; color: var(--text-muted); }
 .msg-actions button:hover { background: var(--hover); color: var(--text); }
-.msg-actions button.starred { color: var(--accent); }
-.msg-actions button.del:hover { color: var(--danger); }
 
 /* ----------------------------- composer -------------------------------- */
 .composer-wrap { padding: 0 16px 20px; flex-shrink: 0; }
@@ -619,11 +607,6 @@ button .icon { pointer-events: none; }
   padding: 1px 5px; border-radius: var(--r-sm); letter-spacing: .3px;
 }
 .member-row .role-badge.admin { background: var(--accent-quiet); color: var(--accent); }
-.member-row .m-actions { display: none; gap: 2px; }
-.member-row:hover .m-actions { display: flex; }
-.member-row .m-actions button { display: grid; place-items: center; width: 26px; height: 26px; color: var(--text-faint); border-radius: var(--r-sm); }
-.member-row .m-actions button:hover { background: var(--active); color: var(--text); }
-
 /* ------------------------------- voice --------------------------------- */
 .voice-view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .voice-stage { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg-0); }

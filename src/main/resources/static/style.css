@@ -1738,12 +1738,12 @@ button:active, .btn:active { transform: scale(.94); }
 
 /* add-reaction pill INVERTED per user: bright by default, quiet on hover */
 .reaction.add {
-  background: rgba(255, 255, 255, .88);
-  color: #2b3547;
-  border-color: transparent;
+  background: rgba(255, 255, 255, .3);
+  color: #fff;
+  border-color: rgba(255, 255, 255, .35);
 }
 .reaction.add:hover {
-  background: var(--hover);
+  background: rgba(255, 255, 255, .12);
   color: var(--text-faint);
   border-color: var(--border);
 }
@@ -1763,33 +1763,30 @@ button:active, .btn:active { transform: scale(.94); }
    (#2c3444) becomes their border, divider and text colour. The outer panes
    (rail/sidebar/members) stay dark with white text. Done by re-scoping the
    design tokens inside these containers. */
+/* iOS-widget smoke: every floating surface is neutral white-alpha glass with
+   WHITE text and glyphs (the user's Apple home-screen reference). */
 .context-menu, .modal, .mention-pop, .profile-card, .emoji-pop,
-.msg-actions, .toast, .search-hit {
-  --text: #2c3444;
-  --text-muted: rgba(44, 52, 68, .78);
-  --text-faint: rgba(44, 52, 68, .58);
-  --text-link: #2f66b3;
-  --accent: #3d7fd9; --accent-hover: #2f66b3;
-  --accent-quiet: rgba(61, 127, 217, .14); --accent-line: rgba(61, 127, 217, .4);
-  --accent-ink: #ffffff;
-  --hover: rgba(44, 52, 68, .08); --active: rgba(44, 52, 68, .15);
-  --surface: rgba(255, 255, 255, .72); --surface-2: rgba(255, 255, 255, .55);
-  --border: rgba(44, 52, 68, .32); --border-strong: rgba(44, 52, 68, .55);
+.emoji-picker, .gif-picker, .status-menu, .pins-pop,
+.msg-actions, .toast, .search-hit,
+.vm, .recording-bar, .pending-chip, .jump-present, .embed-card, .voice-bar {
+  background: rgba(255, 255, 255, .14);
+  -webkit-backdrop-filter: blur(40px) saturate(150%);
+  backdrop-filter: blur(40px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, .28);
   color: var(--text);
 }
-
-.context-menu, .modal, .mention-pop, .profile-card, .emoji-pop {
-  background: rgba(255, 255, 255, .58);
-  -webkit-backdrop-filter: blur(30px) saturate(160%);
-  backdrop-filter: blur(30px) saturate(160%);
-  border: 1px solid rgba(44, 52, 68, .4);
-  box-shadow: 0 28px 64px rgba(8, 14, 26, .35);
+.context-menu, .modal, .mention-pop, .profile-card, .emoji-pop,
+.emoji-picker, .gif-picker, .status-menu, .pins-pop {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 28px 64px rgba(4, 8, 16, .5);
 }
-.modal { background: rgba(255, 255, 255, .68); }
-.toast { background: rgba(255, 255, 255, .8); color: #2c3444; border-color: rgba(44, 52, 68, .4); }
+.modal { background: rgba(255, 255, 255, .18); -webkit-backdrop-filter: blur(48px) saturate(150%); backdrop-filter: blur(48px) saturate(150%); }
+.toast { background: rgba(255, 255, 255, .16); color: var(--text); border-color: rgba(255, 255, 255, .3); }
+.modal .text-input { background: rgba(255, 255, 255, .1); color: var(--text); border-color: rgba(255, 255, 255, .25); }
 
-/* inner elements retinted for the light surfaces */
-.modal .text-input { background: rgba(44, 52, 68, .07); color: var(--text); border-color: rgba(44, 52, 68, .3); }
+/* voice-message player, Discord-reference style: azure play circle, white wave */
+.vm { background: rgba(255, 255, 255, .12); }
+.vm-play { background: var(--accent); color: #fff; }
+.vm-time { color: var(--text); }
 
 /* main chat/voice panel: same dark glass as the side panels (user request) */
 #content {

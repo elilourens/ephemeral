@@ -725,4 +725,9 @@ still work, legacy plaintext passthrough) and the author-only save rule.
   against a real `livekit-server` 1.9.1 (`/rtc/validate` 200 for an app-minted
   token, 401 for garbage). `docs/CODEMAP.md` added — grep-oriented index of
   every package/file for humans + AI agents.
-- **35/35 JUnit** after the realtime change.
+- **Edit history + mentions inbox** (top-2 remaining research items): V10
+  `message_edits` keeps prior versions (ciphertext copied verbatim, cascades
+  with the message so history vanishes on schedule) behind a click on
+  "(edited)"; `GET /api/mentions` + a header @ button list every ping,
+  membership-scoped, admin-only channels never leak.
+- **37/37 JUnit**; browser suites ui/qol/dm/history all green.

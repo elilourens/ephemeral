@@ -17,9 +17,11 @@ import java.io.IOException;
 public class AuthFilter extends OncePerRequestFilter {
 
     private final JwtService jwt;
+    private final AuthService auth;
 
-    public AuthFilter(JwtService jwt) {
+    public AuthFilter(JwtService jwt, AuthService auth) {
         this.jwt = jwt;
+        this.auth = auth;
     }
 
     @Override
@@ -29,7 +31,10 @@ public class AuthFilter extends OncePerRequestFilter {
         if (header != null && header.startsWith("Bearer ")) {
             try {
                 AuthUser user = jwt.parse(header.substring(7));
-                request.setAttribute(CurrentUserArgumentResolver.ATTR, user);
+                // ghost tokens (deleted account / reset DB) must 401, not FK-500
+                if (auth.userExists(user.id())) {
+                    request.setAttribute(CurrentUserArgumentResolver.ATTR, user);
+                }
             } catch (Exception ignored) {
                 // fall through as unauthenticated
             }

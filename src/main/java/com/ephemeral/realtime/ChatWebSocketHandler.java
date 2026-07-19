@@ -25,15 +25,18 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private static final Logger log = LoggerFactory.getLogger(ChatWebSocketHandler.class);
 
     private final JwtService jwt;
+    private final com.ephemeral.auth.AuthService auth;
     private final GuildService guilds;
     private final RealtimeService realtime;
     private final VoicePresenceService presence;
     private final PresenceService userPresence;
     private final ObjectMapper mapper;
 
-    public ChatWebSocketHandler(JwtService jwt, GuildService guilds, RealtimeService realtime,
-                                VoicePresenceService presence, PresenceService userPresence, ObjectMapper mapper) {
+    public ChatWebSocketHandler(JwtService jwt, com.ephemeral.auth.AuthService auth, GuildService guilds,
+                                RealtimeService realtime, VoicePresenceService presence,
+                                PresenceService userPresence, ObjectMapper mapper) {
         this.jwt = jwt;
+        this.auth = auth;
         this.guilds = guilds;
         this.realtime = realtime;
         this.presence = presence;
@@ -53,7 +56,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                 // invalid
             }
         }
-        if (user == null) {
+        if (user == null || !auth.userExists(user.id())) { // ghost tokens: clean reject
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
         }

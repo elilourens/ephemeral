@@ -20,6 +20,17 @@ public class AuthService {
         this.jdbc = jdbc;
     }
 
+    /**
+     * Does this user still exist? A signed JWT alone isn't enough — the account
+     * may have been deleted (or the DB reset under a dev boot); acting on a
+     * ghost id causes FK violations instead of a clean re-login.
+     */
+    public boolean userExists(UUID id) {
+        Integer n = jdbc.queryForObject("select count(*) from users where id = :id",
+                Map.of("id", id), Integer.class);
+        return n != null && n > 0;
+    }
+
     public AuthUser register(String username, String password, String displayName) {
         String uname = username.trim().toLowerCase();
         Integer exists = jdbc.queryForObject(

@@ -807,6 +807,16 @@ class EphemeralE2ETest {
     }
 
     @Test
+    void ghostTokensAreRejectedNot500() throws Exception {
+        // a signed JWT whose user no longer exists (deleted account / reset DB)
+        // must be a clean 401 — not an FK-violation 500 on the first write
+        Session s = register(uniqueName());
+        call("DELETE", "/api/users/me", s.token(), null, 204);
+        call("GET", "/api/guilds", s.token(), null, 401);
+        call("POST", "/api/guilds", s.token(), Map.of("name", "ghost"), 401);
+    }
+
+    @Test
     void groupDmLifecycle() throws Exception {
         String bn = uniqueName(), cn = uniqueName();
         Session a = register(uniqueName());

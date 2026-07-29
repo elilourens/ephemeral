@@ -855,3 +855,141 @@ reconnect + session revocation + backup docs, Zulip event queues, Synapse
 `rc_*` rate limits + media repo, Matrix MSC2918 refresh tokens, Spring
 `ConcurrentWebSocketSessionDecorator`, HikariCP pool sizing, Postgres
 LISTEN/NOTIFY as the 2-node escape hatch.
+
+## 27. Social wave — friends, consent-based joining, role hierarchy
+
+Everything that used to put a user into a server without their (or an admin's)
+say-so is now two-sided, and users get a social graph:
+
+- **Friends** (`friendships`: canonical `user_lo < user_hi` pair + requester +
+  status): request by username, accept/decline/cancel/remove; a crossing
+  request auto-accepts. `GET/POST /api/friends`, `POST /api/friends/{id}/accept`,
+  `DELETE /api/friends/{id}` — every mutation returns the full FriendsDto and
+  pushes `social_update {kind:"friends"}` to both parties.
+- **Friends tab** in the DM sidebar (Messages | Friends), with add-by-username,
+  request sections, presence dots, click-to-DM, and the Server Invites list.
+  Pending count badges the Friends tab and the rail's home button.
+- **Invites replace direct add** (`guild_invites`, unique per guild+invitee):
+  "Invite People" (admin) creates one; the invitee accepts
+  (`POST /api/invites/{id}/accept` → membership) or declines. Ban checks run at
+  create AND accept. Old `POST /api/guilds/{id}/members` is gone.
+- **Join requests replace open join** (`guild_join_requests`): discovery is
+  browse/search → `POST /api/guilds/{id}/join-requests` → an admin approves
+  (audited) or denies. Requester gets `social_update {kind:"guild_joined"}` on
+  approval; online admins get `{kind:"join_requests"}` when someone knocks.
+  Request-while-invited = mutual consent → joins immediately. Old
+  `POST /api/guilds/{id}/join` is gone.
+- **Role hierarchy**: any admin can promote member→admin; ONLY the owner can
+  demote admin→member; the owner's own role is untouchable (owner-demote guard
+  in `GuildService.setRole`, mirrored in the member context menu).
+- Invite/join-request logic lives in `social/InviteService` (not GuildService)
+  to avoid a GuildService↔RealtimeService dependency cycle.
+
+Verified: V18 migration, 4 new e2e tests (invite consent incl. decline +
+non-invitee 404, join-request approval/deny/mutual-consent, friends lifecycle,
+owner-only demotion), full suite green, headless-Chromium screenshots of the
+friends tab / invite accept / discovery request / join-request approval.
+
+## 28. Operator wave — members management, feedback inbox, notifications research
+
+- **Members modal** (server menu → Members, everyone): roster sorted
+  owner→admins→members with role badges; admins get inline Make Admin /
+  Remove Admin (owner only, same guards as the API) / Kick / Ban. Right-click
+  still opens the full user menu.
+- **Feedback** (`feedback` table, V19): Settings → Feedback tab, anyone can
+  submit (≤4000 chars). Only the *instance operator* reads/deletes —
+  `ephemeral.operator-username` (env `EPHEMERAL_OPERATORUSERNAME`), defaulting
+  to the first account ever registered. The client shows the inbox iff
+  `GET /api/feedback` doesn't 403. e2e-tested.
+- **docs/NOTIFICATIONS-RESEARCH.md**: how to do notifications (Notification API
+  now, Web Push/VAPID + PWA next — no vendor accounts needed), email (skip
+  until password reset matters; SES/Brevo then), activity presence (auto-idle
+  is client-only; game detection needs native code), desktop app (not needed
+  for push; Tauri when global PTT/game activity matter).
+
+## 29. Spotify "listening to" presence (no desktop app)
+
+From the research in §28: game detection needs native code, but music presence
+doesn't. Server-side only:
+
+- **Link**: Settings → Connections → Connect Spotify. Authorization-Code OAuth
+  with a single-use state nonce minted per user (callback is the one public
+  `/api/spotify/*` path). Refresh token stored app-encrypted (`enc:v1:`) in
+  `spotify_accounts` (V20); access tokens cached in memory.
+- **Poll**: scheduled task (30s) fetches `/v1/me/player/currently-playing` for
+  users who are **online AND linked** — nobody else, nothing persisted; the
+  "♪ song — artist" line lives in `PresenceService`'s in-memory map and rides
+  the existing `presence_update`/`presence_snapshot` events (new `listening`
+  field). Members column + Friends tab render it via `[data-listening]`
+  in-place updates (same trick as status dots).
+- **Operator setup**: free app at developer.spotify.com; env
+  `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`,
+  `SPOTIFY_REDIRECT_URI=https://<host>/api/spotify/callback` (dashboard must
+  list the URI exactly). Unset = the Connections tab explains, everything else
+  hides. Dev-mode Spotify apps allow ~25 allow-listed users — fine for a
+  friends instance.
+- **Verified**: e2e test with a loopback fixture standing in for
+  accounts/api.spotify.com (connect URL → bad-state rejected → callback links →
+  poll feeds `listening` into the presence snapshot → disconnect clears).
+
+## 30. Jukebox — the "music bot", the ToS-possible way
+
+Requested: a bot that signs into Spotify, joins voice channels, and plays
+queued/searched music. Reality: Spotify's API exposes no audio streams (DRM),
+and piping tracks into a call violates their ToS — the Discord bots that did
+this scraped YouTube and died by C&D. What shipped instead is the compliant
+version with the same UX: a **shared queue whose playback is mirrored onto
+every listener's own Spotify** (Connect API).
+
+- `spotify/JukeboxService` (+ controller under
+  `/api/channels/{id}/jukebox/*`): summon/dismiss per VOICE channel,
+  client-credentials catalog search (tracks + playlists), queue (≤500, playlist
+  expansion ≤100), skip/pause/resume, and Listen Along — an explicit opt-in
+  that issues play/pause/position commands on each listener's device, with
+  per-listener sync errors surfaced ("no active device", "Premium required").
+- All state in-memory (queue dies with the process — ephemerality); auto-
+  advance via a single scheduler thread armed per track end; `jukebox_update`
+  WS event refreshes open panels (guild-scoped broadcast).
+- UI: right-click a voice channel → Jukebox. Now-playing with live position,
+  controls, debounced search with Queue / Queue All, Up Next with removes,
+  listener sync list.
+- Listen Along needs each listener's linked Spotify (§29 scopes now include
+  `user-modify-playback-state`; anyone linked before §30 must re-connect),
+  Premium, and an open Spotify app. Search/queueing needs nothing but the
+  operator's app credentials.
+- Verified: e2e over the loopback fixture (search → queue-starts-playback →
+  listen-along captures play commands → playlist queue → skip → pause →
+  dismiss quiets listeners; non-members 403, text channels 400), suite 59
+  green, plus a headless-Chromium screenshot of the full panel against a dev
+  fixture.
+
+## 31. Voice was dead since the audit wave — the NaN join guard
+
+User report: "can't join voice, it's not refreshing." Root cause, found by
+tracing an instrumented `join()` in headless Chromium: the audit wave (b79ecec)
+added a reentrancy guard — `const seq = ++this._joinSeq` … `if (seq !==
+this._joinSeq) return` — but never initialized `_joinSeq` on the voice object.
+`++undefined` is `NaN`, and `NaN !== NaN`, so EVERY join silently bailed right
+after minting its token: perpetual "Connecting…", no error, in every browser.
+Fix: `_joinSeq: 0`. Verified by the repo's real-SFU suite: groupcall-check 7/7
+(3-way call + screenshare, 0 JS errors) against livekit-server 1.13.4.
+
+Side findings from the same hunt, for future dev runs (livekit.yaml updated):
+- **On WSL2, advertise `node_ip: <WSL eth0 addr>` — neither auto-detect nor
+  loopback works.** Auto-detection picks the 10.255.x loopback alias (dead).
+  `127.0.0.1` works only for browsers *inside* WSL: a Windows browser reaches
+  WSL loopback via the localhost relay, which forwards **TCP only** — signal
+  (7880) connects, then ICE dies with "could not establish pc connection"
+  because the UDP media candidates point at 127.0.0.1. The eth0 address
+  (e.g. 172.26.231.16, changes across WSL restarts — `ip -4 addr show eth0`)
+  is reachable from Windows over both UDP and TCP. Verified by driving real
+  Windows Chrome via CDP: connected + published mic, `connectionType: udp`,
+  and groupcall-check still 7/7 from the WSL side.
+- **Windows/WSL reserves chunks of UDP 50000-50100** (winnat) — the RTC port
+  range now starts at 50110.
+- **Headless-Chromium e2e needs `--disable-features=WebRtcHideLocalIpsWithMdns`**
+  (added to groupcall-check): mDNS candidates don't resolve on WSL/containers,
+  which also stalls ICE.
+- The double-ring seen while voice was broken (every joiner re-rang the DM)
+  was a symptom, not a bug: the ring guard keys off webhook-fed presence, and
+  nobody ever actually connected. With working joins it behaves.

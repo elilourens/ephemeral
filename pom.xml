@@ -115,12 +115,22 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration>
-                    <!-- Keep the ~79 MB of embedded-Postgres binaries (all OSes) OUT of the
-                         production fat jar: they're only used by the dev profile + tests,
-                         both of which run from the plain classpath, never the repackaged jar. -->
-                    <excludeGroupIds>io.zonky.test,io.zonky.test.postgres</excludeGroupIds>
-                </configuration>
+                <executions>
+                    <execution>
+                        <id>repackage</id>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                        <configuration>
+                            <!-- Keep the ~79 MB of embedded-Postgres binaries (all OSes) OUT of the
+                                 production fat jar: they're only used by the dev profile + tests,
+                                 both of which run from the plain classpath, never the repackaged jar.
+                                 Scoped to the repackage goal only — at plugin level this exclusion
+                                 also applies to spring-boot:run, breaking the dev profile. -->
+                            <excludeGroupIds>io.zonky.test,io.zonky.test.postgres</excludeGroupIds>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

@@ -231,13 +231,37 @@ public class RealtimeService {
         }
     }
 
-    /** Online/status change for a user — sent to ALL clients. */
-    public void presenceUpdate(UUID userId, boolean online, String status, String customStatus) {
+    /**
+     * Something social changed for these users (friends / invites / join requests /
+     * "you're in"). Clients refetch the affected list; {@code guildId} is context
+     * for kinds that have one (nullable).
+     */
+    public void socialUpdate(java.util.Collection<UUID> userIds, String kind, UUID guildId) {
+        Map<String, Object> data = new java.util.HashMap<>();
+        data.put("kind", kind);
+        data.put("guildId", guildId);
+        sendToUsers(userIds, Map.of("type", "social_update", "data", data));
+    }
+
+    /** The jukebox queue/now-playing changed — open panels refetch. */
+    public void jukeboxUpdate(UUID channelId, UUID guildId) {
+        Map<String, Object> envelope = Map.of("type", "jukebox_update",
+                "data", Map.of("channelId", channelId));
+        if (guildId != null) {
+            broadcastGuild(guildId, envelope, null);
+        } else {
+            broadcastAll(envelope); // dismissal after removal: guild unknown, cheap enough
+        }
+    }
+
+    /** Online/status/listening change for a user — sent to ALL clients. */
+    public void presenceUpdate(UUID userId, boolean online, String status, String customStatus, String listening) {
         Map<String, Object> data = new java.util.HashMap<>();
         data.put("userId", userId);
         data.put("online", online);
         data.put("status", status);
         data.put("customStatus", customStatus);
+        data.put("listening", listening);
         broadcastAll(Map.of("type", "presence_update", "data", data));
     }
 

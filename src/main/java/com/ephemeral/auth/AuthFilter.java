@@ -57,6 +57,7 @@ public class AuthFilter extends OncePerRequestFilter {
         return !path.startsWith("/api/auth/")
                 && !path.equals("/api/health")
                 && !path.startsWith("/api/files/") // file GETs are public (unguessable ids)
-                && !path.startsWith("/api/livekit/"); // livekit webhook (verified by signature)
+                && !path.startsWith("/api/livekit/") // livekit webhook (verified by signature)
+                && !path.equals("/api/spotify/callback"); // OAuth redirect (bound by single-use state nonce)
     }
 }

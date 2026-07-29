@@ -51,7 +51,46 @@ public class AppProperties {
     /** Tenor v2 API key for the GIF picker. Empty = picker disabled (pasted GIF links still render). */
     private String tenorKey = "";
 
+    /**
+     * Username of the instance operator — the only account that can read
+     * submitted feedback. Blank = the first account ever registered (the
+     * self-hosting default: whoever set the instance up).
+     */
+    private String operatorUsername = "";
+
     private final LiveKit livekit = new LiveKit();
+
+    private final Spotify spotify = new Spotify();
+
+    /**
+     * Spotify "listening to" presence. Needs an app registered at
+     * developer.spotify.com (free); blank client id = feature hidden. In the
+     * dashboard, add {@code redirectUri} EXACTLY as configured here.
+     */
+    public static class Spotify {
+        private String clientId = "";
+        private String clientSecret = "";
+        /** e.g. https://chat.example.com/api/spotify/callback */
+        private String redirectUri = "";
+        /** Overridable for tests; real values are Spotify's. */
+        private String authBase = "https://accounts.spotify.com";
+        private String apiBase = "https://api.spotify.com";
+        /** How often to refresh currently-playing for online, linked users. */
+        private Duration pollInterval = Duration.ofSeconds(30);
+
+        public String getClientId() { return clientId; }
+        public void setClientId(String clientId) { this.clientId = clientId; }
+        public String getClientSecret() { return clientSecret; }
+        public void setClientSecret(String clientSecret) { this.clientSecret = clientSecret; }
+        public String getRedirectUri() { return redirectUri; }
+        public void setRedirectUri(String redirectUri) { this.redirectUri = redirectUri; }
+        public String getAuthBase() { return authBase; }
+        public void setAuthBase(String authBase) { this.authBase = authBase; }
+        public String getApiBase() { return apiBase; }
+        public void setApiBase(String apiBase) { this.apiBase = apiBase; }
+        public Duration getPollInterval() { return pollInterval; }
+        public void setPollInterval(Duration pollInterval) { this.pollInterval = pollInterval; }
+    }
 
     public static class LiveKit {
         /** URL the browser connects to (ws:// or wss://). */
@@ -91,5 +130,8 @@ public class AppProperties {
     public void setAllowPrivateUnfurl(boolean allowPrivateUnfurl) { this.allowPrivateUnfurl = allowPrivateUnfurl; }
     public String getTenorKey() { return tenorKey; }
     public void setTenorKey(String tenorKey) { this.tenorKey = tenorKey; }
+    public String getOperatorUsername() { return operatorUsername; }
+    public void setOperatorUsername(String operatorUsername) { this.operatorUsername = operatorUsername; }
     public LiveKit getLivekit() { return livekit; }
+    public Spotify getSpotify() { return spotify; }
 }

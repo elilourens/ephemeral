@@ -6,13 +6,16 @@ import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Online presence: a user is online while they hold ≥1 WebSocket connection.
- * Combines with their chosen status (online/idle/dnd) and custom status, and
- * broadcasts changes to all clients.
+ * Combines with their chosen status (online/idle/dnd), custom status, and the
+ * ephemeral "listening to" line (set by integrations like Spotify — in-memory
+ * only, never persisted), and broadcasts changes to all clients.
  */
 @Service
 public class PresenceService {
@@ -20,6 +23,7 @@ public class PresenceService {
     private final RealtimeService realtime;
     private final NamedParameterJdbcTemplate jdbc;
     private final Map<UUID, Integer> connections = new ConcurrentHashMap<>();
+    private final Map<UUID, String> listening = new ConcurrentHashMap<>();
 
     public PresenceService(RealtimeService realtime, NamedParameterJdbcTemplate jdbc) {
         this.realtime = realtime;
@@ -30,7 +34,7 @@ public class PresenceService {
         int count = connections.merge(userId, 1, Integer::sum);
         if (count == 1) {
             String[] st = statusOf(userId);
-            realtime.presenceUpdate(userId, true, st[0], st[1]);
+            realtime.presenceUpdate(userId, true, st[0], st[1], listening.get(userId));
         }
     }
 
@@ -41,7 +45,7 @@ public class PresenceService {
         }
         if (count <= 1) {
             connections.remove(userId);
-            realtime.presenceUpdate(userId, false, null, null);
+            realtime.presenceUpdate(userId, false, null, null, null);
         } else {
             connections.put(userId, count - 1);
         }
@@ -51,11 +55,29 @@ public class PresenceService {
     public void statusChanged(UUID userId) {
         if (connections.containsKey(userId)) {
             String[] st = statusOf(userId);
-            realtime.presenceUpdate(userId, true, st[0], st[1]);
+            realtime.presenceUpdate(userId, true, st[0], st[1], listening.get(userId));
         }
     }
 
-    /** { userId -> {status, customStatus} } for everyone currently online. */
+    /**
+     * Set (or clear, with null) what a user is listening to. Broadcasts only on
+     * change, and only while they're online — the poller that feeds this skips
+     * offline users anyway.
+     */
+    public void setListening(UUID userId, String value) {
+        String prev = value == null ? listening.remove(userId) : listening.put(userId, value);
+        if (!Objects.equals(prev, value) && connections.containsKey(userId)) {
+            String[] st = statusOf(userId);
+            realtime.presenceUpdate(userId, true, st[0], st[1], value);
+        }
+    }
+
+    /** Users currently holding at least one socket (for pollers). */
+    public Set<UUID> onlineUsers() {
+        return Set.copyOf(connections.keySet());
+    }
+
+    /** { userId -> {status, customStatus, listening} } for everyone currently online. */
     public Map<String, Object> snapshot() {
         Map<String, Object> out = new HashMap<>();
         for (UUID userId : connections.keySet()) {
@@ -63,6 +85,7 @@ public class PresenceService {
             Map<String, Object> m = new HashMap<>();
             m.put("status", st[0]);
             m.put("customStatus", st[1]);
+            m.put("listening", listening.get(userId));
             out.put(userId.toString(), m);
         }
         return out;

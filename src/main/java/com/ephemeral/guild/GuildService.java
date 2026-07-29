@@ -300,24 +300,8 @@ public class GuildService {
         return buildGuildFor(userId, guildId);
     }
 
-    public GuildDto joinGuild(UUID userId, UUID guildId) {
-        Integer exists = jdbc.queryForObject("select count(*) from guilds where id = :g",
-                Map.of("g", guildId), Integer.class);
-        if (exists == null || exists == 0) {
-            throw ApiException.notFound("server not found");
-        }
-        if (isBanned(userId, guildId)) {
-            throw ApiException.forbidden("you are banned from this server");
-        }
-        int inserted = jdbc.update("""
-                insert into memberships (guild_id, user_id, role) values (:g, :u, 'member')
-                on conflict (guild_id, user_id) do nothing
-                """, Map.of("g", guildId, "u", userId));
-        if (inserted > 0) {
-            audit.log(guildId, userId, "member.join", userId, null);
-        }
-        return buildGuildFor(userId, guildId);
-    }
+    // Joining is consent-based: invites and join requests live in
+    // social/InviteService — there is no open-join path anymore.
 
     // ---- channels ---------------------------------------------------------
 
@@ -481,38 +465,30 @@ public class GuildService {
                         rs.getObject("avatar_id", UUID.class) == null ? null : "/api/files/" + rs.getObject("avatar_id", UUID.class)));
     }
 
-    public MemberDto addMember(UUID userId, UUID guildId, String username) {
-        requireAdmin(userId, guildId);
-        var found = jdbc.query("select id, display_name from users where username = :u",
-                Map.of("u", username.trim().toLowerCase()),
-                (rs, i) -> new Object[]{rs.getObject("id", UUID.class), rs.getString("display_name")});
-        if (found.isEmpty()) {
-            throw ApiException.notFound("no such user");
-        }
-        UUID targetId = (UUID) found.get(0)[0];
-        if (isBanned(targetId, guildId)) {
-            throw ApiException.badRequest("that user is banned from this server (unban them first)");
-        }
-        int inserted = jdbc.update("""
-                insert into memberships (guild_id, user_id, role) values (:g, :u, 'member')
-                on conflict (guild_id, user_id) do nothing
-                """, Map.of("g", guildId, "u", targetId));
-        if (inserted > 0) {
-            audit.log(guildId, userId, "member.add", targetId, null);
-        }
-        return new MemberDto(targetId, username.trim().toLowerCase(), (String) found.get(0)[1], "member", null);
-    }
-
+    /**
+     * Promote or demote a member. Any admin can promote member → admin; only the
+     * server owner can demote admin → member. The owner's own role is untouchable.
+     */
     public void setRole(UUID userId, UUID guildId, UUID targetUserId, String newRole) {
         requireAdmin(userId, guildId);
         if (!newRole.equals("admin") && !newRole.equals("member")) {
             throw ApiException.badRequest("role must be 'admin' or 'member'");
         }
-        int n = jdbc.update("update memberships set role = :r where guild_id = :g and user_id = :u",
-                Map.of("r", newRole, "g", guildId, "u", targetUserId));
-        if (n == 0) {
-            throw ApiException.notFound("member not found");
+        UUID owner = jdbc.queryForObject("select owner_id from guilds where id = :g",
+                Map.of("g", guildId), UUID.class);
+        if (targetUserId.equals(owner)) {
+            throw ApiException.badRequest("the owner's role cannot be changed");
         }
+        String current = role(targetUserId, guildId)
+                .orElseThrow(() -> ApiException.notFound("member not found"));
+        if (current.equals(newRole)) {
+            return;
+        }
+        if (newRole.equals("member") && !userId.equals(owner)) {
+            throw ApiException.forbidden("only the server owner can demote an admin");
+        }
+        jdbc.update("update memberships set role = :r where guild_id = :g and user_id = :u",
+                Map.of("r", newRole, "g", guildId, "u", targetUserId));
         audit.log(guildId, userId, "member.role", targetUserId, newRole);
     }
 

@@ -4,14 +4,22 @@
 port: 7880
 rtc:
   tcp_port: 7881
-  port_range_start: 50000
-  port_range_end: 50100
+  # Windows/WSL reserves chunks of UDP 50000-50100 (winnat) — start above them.
+  port_range_start: 50110
+  port_range_end: 50160
   # Set true when self-hosting on a box whose public IP differs from its local
   # IP (most VPS / behind-NAT setups) so clients can reach the media ports.
   use_external_ip: false
+  # Dev on WSL2: advertise the WSL eth0 address, NOT 127.0.0.1. Windows
+  # browsers reach WSL loopback only over TCP (the localhost relay drops UDP),
+  # so loopback candidates fail ICE with "could not establish pc connection".
+  # The eth0 address is reachable from Windows over both UDP and TCP.
+  # It changes across WSL restarts — re-check with: ip -4 addr show eth0
+  # (Auto-detection is also wrong here: it picks the 10.255.x loopback alias.)
+  node_ip: 172.26.231.16
 keys:
   devkey: livekit-dev-secret-please-change-me-0123456789
 webhook:
   api_key: devkey
   urls:
-    - http://app:8080/api/livekit/webhook
+    - http://localhost:8080/api/livekit/webhook

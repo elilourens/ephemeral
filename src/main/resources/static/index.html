@@ -1,8 +1,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#eaf0fb" />
-<title>ephemeral</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23e2965a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M5 22h14'/><path d='M5 2h14'/><path d='M17 22v-4.17a2 2 0 0 0-.59-1.41L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22'/><path d='M7 2v4.17a2 2 0 0 0 .59 1.41L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2'/></svg>" />
+<title>Ephemeral</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges' fill='%232f80ff'><rect x='0' y='0' width='12' height='1'/><rect x='1' y='1' width='1' height='1'/><rect x='10' y='1' width='1' height='1'/><rect x='2' y='2' width='1' height='1'/><rect x='9' y='2' width='1' height='1'/><rect x='3' y='3' width='1' height='1'/><rect x='8' y='3' width='1' height='1'/><rect x='4' y='4' width='1' height='1'/><rect x='7' y='4' width='1' height='1'/><rect x='5' y='5' width='2' height='1'/><rect x='5' y='6' width='2' height='1'/><rect x='4' y='7' width='1' height='1'/><rect x='7' y='7' width='1' height='1'/><rect x='3' y='8' width='1' height='1'/><rect x='8' y='8' width='1' height='1'/><rect x='2' y='9' width='1' height='1'/><rect x='9' y='9' width='1' height='1'/><rect x='1' y='10' width='1' height='1'/><rect x='10' y='10' width='1' height='1'/><rect x='0' y='11' width='12' height='1'/><g opacity='.55'><rect x='3' y='2' width='6' height='1'/><rect x='4' y='3' width='4' height='1'/><rect x='5' y='4' width='2' height='1'/><rect x='5' y='8' width='2' height='1'/><rect x='4' y='9' width='4' height='1'/><rect x='3' y='10' width='6' height='1'/></g></svg>" />
 <link rel="stylesheet" href="/style.css?v=glass2" />
 <style>
   /* voice spotlight / focus */
@@ -53,10 +53,33 @@
 <div id="auth-screen" class="auth-screen">
   <div class="auth-card">
     <div class="auth-brand">
-      <svg class="icon auth-mark" viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.17a2 2 0 0 0-.59-1.41L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22"/><path d="M7 2v4.17a2 2 0 0 0 .59 1.41L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2"/></svg>
-      <h1 class="brand">ephemeral</h1>
+      <!-- pixel-art hourglass: 12×12 grid of rects, crisp edges, sand at 55% -->
+      <svg class="icon auth-mark" viewBox="0 0 12 12" width="32" height="32" shape-rendering="crispEdges" fill="currentColor" aria-hidden="true">
+        <rect x="0" y="0" width="12" height="1"/>
+        <rect x="1" y="1" width="1" height="1"/><rect x="10" y="1" width="1" height="1"/>
+        <rect x="2" y="2" width="1" height="1"/><rect x="9" y="2" width="1" height="1"/>
+        <rect x="3" y="3" width="1" height="1"/><rect x="8" y="3" width="1" height="1"/>
+        <rect x="4" y="4" width="1" height="1"/><rect x="7" y="4" width="1" height="1"/>
+        <rect x="5" y="5" width="2" height="1"/>
+        <rect x="5" y="6" width="2" height="1"/>
+        <rect x="4" y="7" width="1" height="1"/><rect x="7" y="7" width="1" height="1"/>
+        <rect x="3" y="8" width="1" height="1"/><rect x="8" y="8" width="1" height="1"/>
+        <rect x="2" y="9" width="1" height="1"/><rect x="9" y="9" width="1" height="1"/>
+        <rect x="1" y="10" width="1" height="1"/><rect x="10" y="10" width="1" height="1"/>
+        <rect x="0" y="11" width="12" height="1"/>
+        <g opacity=".65">
+          <!-- sand: equal 6-4-2 piles so the drain mirrors the fill exactly -->
+          <rect class="hg-t0" x="3" y="2" width="6" height="1"/>
+          <rect class="hg-t1" x="4" y="3" width="4" height="1"/>
+          <rect class="hg-t2" x="5" y="4" width="2" height="1"/>
+          <rect class="hg-g" x="5" y="7" width="1" height="1" opacity="0"/>
+          <rect class="hg-b3" x="5" y="8" width="2" height="1"/>
+          <rect class="hg-b2" x="4" y="9" width="4" height="1"/>
+          <rect class="hg-b1" x="3" y="10" width="6" height="1"/>
+        </g>
+      </svg>
+      <h1 class="brand">Ephemeral</h1>
     </div>
-    <p class="tagline">Messages vanish after 7 days — unless you save them.</p>
     <form id="auth-form" autocomplete="on">
       <label>
         Username
@@ -89,7 +112,7 @@
   <!-- channel sidebar -->
   <aside class="sidebar" id="sidebar">
     <header class="sidebar-header">
-      <span class="guild-title" id="guild-name">ephemeral</span>
+      <span class="guild-title" id="guild-name">Ephemeral</span>
     </header>
     <div class="channel-list" id="channel-list"></div>
     <div class="voice-bar hidden" id="voice-bar"></div>
@@ -112,7 +135,7 @@
       <div class="big">
         <svg class="icon" viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.17a2 2 0 0 0-.59-1.41L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22"/><path d="M7 2v4.17a2 2 0 0 0 .59 1.41L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2"/></svg>
       </div>
-      <h2>Welcome to ephemeral</h2>
+      <h2>Welcome to Ephemeral</h2>
       <p>Create or join a server on the left to start chatting.<br />Everything you say disappears in 7 days — unless you save it.</p>
     </section>
 

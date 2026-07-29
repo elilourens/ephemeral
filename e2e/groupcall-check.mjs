@@ -10,7 +10,10 @@ const check = (name, ok) => { ok ? pass++ : fail++; console.log((ok ? "PASS " : 
 
 const browser = await chromium.launch({
   args: ["--no-sandbox", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
-    "--auto-select-desktop-capture-source=Entire screen"],
+    "--auto-select-desktop-capture-source=Entire screen",
+    // mDNS ICE candidates can't resolve on WSL/containers — ICE never pairs and
+    // joins hang at "Connecting…"; expose the real host candidate instead
+    "--disable-features=WebRtcHideLocalIpsWithMdns"],
 });
 
 async function newUser(name) {

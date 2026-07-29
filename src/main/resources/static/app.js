@@ -44,6 +44,10 @@
     dmMode: false,               // are we in the Direct Messages "space"?
     dms: [],                     // [DmDto] my DM conversations
     currentDm: null,             // the open DM (DmDto)
+    dmTab: "dms",                // DM sidebar tab: 'dms' | 'friends'
+    friends: { friends: [], incoming: [], outgoing: [] }, // FriendsDto
+    invites: [],                 // [InviteDto] pending server invites for me
+    myJoinRequests: [],          // [guildId] where my join request is pending
   };
 
   // Element lookup shortcut.
@@ -329,6 +333,20 @@
       el.className = "status-dot " + st;
       el.setAttribute("aria-label", statusLabel(st));
     });
+    // "♪ song — artist" lines update in place, same trick as the dots
+    document.querySelectorAll("[data-listening]").forEach((el) => {
+      const p = state.presence[el.dataset.listening];
+      const t = (p && p.online && p.listening) || null;
+      el.textContent = t ? "♪ " + t : "";
+      el.classList.toggle("hidden", !t);
+    });
+  }
+  // A self-updating "♪ …" line for one user (empty/hidden when they're not playing).
+  function listeningLine(userId) {
+    const p = state.presence[userId];
+    const t = (p && p.online && p.listening) || null;
+    return h("div", { class: "m-listening" + (t ? "" : " hidden"),
+      dataset: { listening: userId }, text: t ? "♪ " + t : "" });
   }
   function ensureMyPresence() {
     if (state.me && !state.presence[state.me.id]) {
@@ -485,7 +503,19 @@
     myGuilds: () => api("/api/guilds"),
     allGuilds: () => api("/api/guilds/all"),
     createGuild: (name) => api("/api/guilds", { method: "POST", body: { name } }),
-    joinGuild: (id) => api(`/api/guilds/${id}/join`, { method: "POST" }),
+    requestJoin: (id) => api(`/api/guilds/${id}/join-requests`, { method: "POST" }),
+    myJoinRequests: () => api("/api/me/join-requests"),
+    joinRequests: (gid) => api(`/api/guilds/${gid}/join-requests`),
+    approveJoin: (gid, uid) => api(`/api/guilds/${gid}/join-requests/${uid}/approve`, { method: "POST" }),
+    denyJoin: (gid, uid) => api(`/api/guilds/${gid}/join-requests/${uid}`, { method: "DELETE" }),
+    invite: (gid, username) => api(`/api/guilds/${gid}/invites`, { method: "POST", body: { username } }),
+    myInvites: () => api("/api/invites"),
+    acceptInvite: (id) => api(`/api/invites/${id}/accept`, { method: "POST" }),
+    declineInvite: (id) => api(`/api/invites/${id}`, { method: "DELETE" }),
+    friends: () => api("/api/friends"),
+    addFriend: (username) => api("/api/friends", { method: "POST", body: { username } }),
+    acceptFriend: (uid) => api(`/api/friends/${uid}/accept`, { method: "POST" }),
+    removeFriend: (uid) => api(`/api/friends/${uid}`, { method: "DELETE" }),
     renameGuild: (id, name) => api(`/api/guilds/${id}`, { method: "PATCH", body: { name } }),
     setGuildIcon: (id, attachmentId) => api(`/api/guilds/${id}/icon`, { method: "PUT", body: { attachmentId } }),
     addEmoji: (gid, name, attachmentId) => api(`/api/guilds/${gid}/emoji`, { method: "POST", body: { name, attachmentId } }),
@@ -506,8 +536,6 @@
     deleteChannel: (id) => api(`/api/channels/${id}`, { method: "DELETE" }),
 
     members: (gid) => api(`/api/guilds/${gid}/members`),
-    addMember: (gid, username) =>
-      api(`/api/guilds/${gid}/members`, { method: "POST", body: { username } }),
     setRole: (gid, uid, role) =>
       api(`/api/guilds/${gid}/members/${uid}/role`, { method: "PUT", body: { role } }),
     kick: (gid, uid) => api(`/api/guilds/${gid}/members/${uid}`, { method: "DELETE" }),
@@ -536,6 +564,25 @@
 
     getUser: (id) => api(`/api/users/${id}`),
     updateMe: (body) => api(`/api/users/me`, { method: "PATCH", body }),
+
+    jukebox: (cid) => api(`/api/channels/${cid}/jukebox`),
+    jukeboxSummon: (cid) => api(`/api/channels/${cid}/jukebox/summon`, { method: "POST" }),
+    jukeboxDismiss: (cid) => api(`/api/channels/${cid}/jukebox`, { method: "DELETE" }),
+    jukeboxSearch: (cid, q) => api(`/api/channels/${cid}/jukebox/search?q=${encodeURIComponent(q)}`),
+    jukeboxQueue: (cid, track) => api(`/api/channels/${cid}/jukebox/queue`, { method: "POST", body: track }),
+    jukeboxQueuePlaylist: (cid, playlistId) => api(`/api/channels/${cid}/jukebox/queue-playlist`, { method: "POST", body: { playlistId } }),
+    jukeboxRemove: (cid, i) => api(`/api/channels/${cid}/jukebox/queue/${i}`, { method: "DELETE" }),
+    jukeboxSkip: (cid) => api(`/api/channels/${cid}/jukebox/skip`, { method: "POST" }),
+    jukeboxPause: (cid, paused) => api(`/api/channels/${cid}/jukebox/pause`, { method: "POST", body: { paused } }),
+    jukeboxListen: (cid, on) => api(`/api/channels/${cid}/jukebox/listen`, { method: "POST", body: { on } }),
+
+    spotifyStatus: () => api(`/api/spotify/status`),
+    spotifyConnectUrl: () => api(`/api/spotify/connect-url`),
+    spotifyDisconnect: () => api(`/api/spotify`, { method: "DELETE" }),
+
+    sendFeedback: (body) => api(`/api/feedback`, { method: "POST", body: { body } }),
+    listFeedback: () => api(`/api/feedback`),
+    deleteFeedback: (id) => api(`/api/feedback/${id}`, { method: "DELETE" }),
 
     getSettings: () => api(`/api/users/me/settings`),
     putSettings: (body) => api(`/api/users/me/settings`, { method: "PUT", body }),
@@ -745,6 +792,7 @@
               online: true,
               status: (info && info.status) || "online",
               customStatus: (info && info.customStatus) || null,
+              listening: (info && info.listening) || null,
             };
           }
           ensureMyPresence();
@@ -757,6 +805,7 @@
             online: !!d.online,
             status: d.status || (d.online ? "online" : null),
             customStatus: d.customStatus != null ? d.customStatus : null,
+            listening: d.listening != null ? d.listening : null,
           };
           applyPresence();
           break;
@@ -777,6 +826,14 @@
         case "voice_force":
           // an admin muted/deafened/disconnected me
           applyVoiceForce(d);
+          break;
+        case "social_update":
+          // friends / invites / join requests changed somewhere that involves me
+          handleSocialUpdate(d);
+          break;
+        case "jukebox_update":
+          // shared queue changed — refresh an open jukebox panel for that channel
+          if (jukeboxOpen && jukeboxOpen.channelId === d.channelId) jukeboxOpen.refresh();
           break;
       }
     },
@@ -942,6 +999,88 @@
   }
 
   // The Voice & Video settings modal, with a live input-level meter.
+  // Settings → Connections: link Spotify so friends see "♪ song — artist"
+  // while you're online. Purely server-side polling — no desktop app.
+  function buildConnectionsRows() {
+    const host = h("div", { class: "conn-box" }, h("div", { class: "set-note", text: "Loading…" }));
+    const render = async () => {
+      let st;
+      try { st = await API.spotifyStatus(); }
+      catch (e) { host.innerHTML = ""; host.appendChild(h("div", { class: "modal-error", text: e.message })); return; }
+      host.innerHTML = "";
+      host.appendChild(h("div", { class: "conn-title", text: "Spotify" }));
+      if (!st.configured) {
+        host.appendChild(h("div", { class: "set-note",
+          text: "Not set up on this instance yet. The operator registers a free app at developer.spotify.com and sets SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET and SPOTIFY_REDIRECT_URI (<your-url>/api/spotify/callback)." }));
+        return;
+      }
+      if (st.connected) {
+        host.append(
+          h("div", { class: "set-note", text: "Connected. While you're online and playing something, friends see \"♪ song — artist\" next to your name. Nothing about what you play is ever stored." }),
+          h("button", { class: "btn btn-secondary", text: "Disconnect Spotify", onclick: async () => {
+            try { await API.spotifyDisconnect(); toast("Spotify disconnected"); render(); }
+            catch (e) { toast(e.message, true); }
+          } }));
+      } else {
+        host.append(
+          h("div", { class: "set-note", text: "Show friends what you're listening to while you're online. You'll be sent to Spotify to approve read-only access to your currently-playing track." }),
+          h("button", { class: "btn", text: "Connect Spotify", onclick: async () => {
+            try { const r = await API.spotifyConnectUrl(); window.location.href = r.url; }
+            catch (e) { toast(e.message, true); }
+          } }));
+      }
+    };
+    render();
+    return [host];
+  }
+
+  // Settings → Feedback: everyone can send a note to whoever runs the instance;
+  // the operator (and only them — the API 403s everyone else) also sees the inbox.
+  function buildFeedbackRows() {
+    const text = h("textarea", { class: "text-input fb-text", rows: "4",
+      placeholder: "What's broken, confusing, or missing? Goes straight to whoever runs this instance." });
+    const note = h("div", { class: "set-note", text: "Feedback is private — other users never see it." });
+    const send = h("button", { class: "btn", text: "Send Feedback" });
+    const inbox = h("div", { class: "fb-inbox" });
+    send.onclick = async () => {
+      try {
+        await API.sendFeedback(text.value);
+        text.value = "";
+        toast("Feedback sent — thank you!");
+        loadInbox(); // operator self-test shows up immediately
+      } catch (e) { toast(e.message, true); }
+    };
+    const loadInbox = async () => {
+      let items;
+      try {
+        const res = await API.listFeedback();
+        if (!res || !res.operator) { inbox.innerHTML = ""; return; } // not the operator; no inbox
+        items = res.items || [];
+      } catch { inbox.innerHTML = ""; return; }
+      inbox.innerHTML = "";
+      inbox.appendChild(h("div", { class: "channel-group-header" },
+        h("span", { text: `Inbox — ${items.length} (only you see this)` })));
+      if (!items.length) {
+        inbox.appendChild(h("div", { class: "set-note", text: "No feedback yet." }));
+        return;
+      }
+      for (const it of items) {
+        inbox.appendChild(h("div", { class: "fb-item" },
+          h("div", { class: "fb-meta" },
+            h("span", { class: "fb-author", text: it.author }),
+            h("span", { class: "fb-time", text: new Date(it.createdAtMs).toLocaleString() }),
+            h("button", { class: "friend-action danger", "aria-label": "Delete feedback",
+              onclick: async () => {
+                try { await API.deleteFeedback(it.id); loadInbox(); }
+                catch (e) { toast(e.message, true); }
+              } }, icon("trash", 14))),
+          h("div", { class: "fb-body", text: it.body })));
+      }
+    };
+    loadInbox();
+    return [text, h("div", { class: "fb-actions" }, send), note, inbox];
+  }
+
   async function openMediaSettings() {
     const devices = await listDevices();
     // request a mic grant so device labels populate + the level meter has a stream
@@ -1058,6 +1197,8 @@
         toggleRow("Share Typing Indicator", "shareTyping", "Off = others never see \"…is typing\" from you.", null),
         toggleRow("Notification Sound", "notifSound", "Play a ping when you're @mentioned.", null),
       ] },
+      { name: "Connections", rows: buildConnectionsRows() },
+      { name: "Feedback", rows: buildFeedbackRows() },
     ];
     const tabbar = h("div", { class: "set-tabs" });
     const panels = sections.map((s, i) => h("div", { class: "set-tabpanel" + (i ? " hidden" : "") }, ...s.rows));
@@ -1073,7 +1214,7 @@
     const body = [tabbar, ...panels];
 
     const { backdrop, root } = modal({
-      title: "Voice & Video Settings",
+      title: "Settings",
       body,
       footer: [h("button", { class: "btn", text: "Done", onclick: closeModal })],
     });
@@ -1148,6 +1289,7 @@
   const voice = {
     room: null,
     channelId: null,
+    _joinSeq: 0, // reentrancy token for join(); ++undefined is NaN and NaN !== NaN bails EVERY join
     tiles: new Map(), // key -> tile element (key = identity, or identity + ":screen")
     focusedKey: null, // spotlight: the tile key filling the main pane, or null for grid
     localMutes: new Set(), // identities muted just for me (local volume off)
@@ -1790,7 +1932,7 @@
     const rail = $("guild-rail");
     rail.innerHTML = "";
     // Home / Direct Messages sits above the servers (like Discord's home button).
-    const dmUnread = dmUnreadCount();
+    const dmUnread = dmUnreadCount() + socialPendingCount(); // messages + friend requests/invites
     const home = h("div", { class: "guild-icon action dm-home", "aria-label": "Direct Messages", onclick: enterDmMode },
       icon("message-circle", 24));
     const homeSlot = h("div", { class: "guild-slot" + (state.dmMode ? " active" : "") + (dmUnread ? " unread" : "") },
@@ -1835,7 +1977,7 @@
     const g = state.currentGuild;
     const gn = $("guild-name");
     gn.innerHTML = "";
-    gn.append(h("span", { class: "gn-text", text: g ? g.name : "ephemeral" }),
+    gn.append(h("span", { class: "gn-text", text: g ? g.name : "Ephemeral" }),
       g ? h("span", { class: "gn-caret" }, icon("chevron-down", 16)) : null);
     gn.classList.toggle("clickable", !!g);
     gn.onclick = g ? (e) => { e.stopPropagation(); const r = gn.getBoundingClientRect(); openGuildMenu(g, r.left, r.bottom + 4); } : null;
@@ -2823,7 +2965,8 @@
           onclick: (e) => { e.stopPropagation(); openProfileCard(m.userId, e.currentTarget); } },
           h("div", { class: "m-dname" + (m.role === "admin" ? " admin" : ""),
             text: (m.displayName || m.username) + (isMe ? " (you)" : "") }),
-          h("div", { class: "m-uname", text: "@" + m.username })
+          h("div", { class: "m-uname", text: "@" + m.username }),
+          listeningLine(m.userId)
         )
       );
       row.addEventListener("contextmenu", (e) => {
@@ -3037,6 +3180,49 @@
     if (state.currentDm) selectDm(state.currentDm);
     else showView("empty");
     loadDms();
+    loadSocial();
+  }
+
+  // ---- friends + invites (the social layer) ----
+  function socialPendingCount() {
+    return ((state.friends && state.friends.incoming) || []).length + (state.invites || []).length;
+  }
+
+  async function loadSocial() {
+    try {
+      const [friends, invites] = await Promise.all([API.friends(), API.myInvites()]);
+      state.friends = friends;
+      state.invites = invites;
+    } catch { /* keep the last known lists */ }
+    if (state.dmMode) renderDmSidebar();
+    renderGuildRail();
+  }
+
+  async function handleSocialUpdate(d) {
+    const kind = d && d.kind;
+    if (kind === "guild_joined") {
+      // an admin approved my request — pull the new server into the rail
+      state.myJoinRequests = state.myJoinRequests.filter((g) => g !== d.guildId);
+      try {
+        state.guilds = await API.myGuilds();
+        ws.subscribeGuilds(state.guilds.map((g) => g.id));
+        renderGuildRail();
+        const g = state.guilds.find((x) => x.id === d.guildId);
+        toast(`Your request to join ${g ? g.name : "a server"} was approved 🎉`);
+      } catch {}
+      return;
+    }
+    if (kind === "join_requests") {
+      const g = state.guilds.find((x) => x.id === d.guildId);
+      if (g) toast(`New request to join ${g.name} (server menu → Join Requests)`);
+      return;
+    }
+    const hadInvites = (state.invites || []).length;
+    await loadSocial();
+    if (kind === "invites" && (state.invites || []).length > hadInvites) {
+      const inv = state.invites[0];
+      toast(`${inv.inviterName || "Someone"} invited you to ${inv.guildName}`);
+    }
   }
 
   function renderDmSidebar() {
@@ -3046,6 +3232,18 @@
     gn.onclick = null; gn.oncontextmenu = null;
     const list = $("channel-list");
     list.innerHTML = "";
+    // Messages | Friends tabs (friends chip counts requests waiting on ME + invites)
+    const pending = socialPendingCount();
+    const tabs = h("div", { class: "dm-tabs" },
+      h("button", { class: "dm-tab" + (state.dmTab === "dms" ? " active" : ""),
+        onclick: () => { state.dmTab = "dms"; renderDmSidebar(); } },
+        icon("message-circle", 15), h("span", { text: "Messages" })),
+      h("button", { class: "dm-tab" + (state.dmTab === "friends" ? " active" : ""),
+        onclick: () => { state.dmTab = "friends"; renderDmSidebar(); } },
+        icon("users", 15), h("span", { text: "Friends" }),
+        pending ? h("span", { class: "dm-tab-badge", text: String(pending) }) : null));
+    list.appendChild(tabs);
+    if (state.dmTab === "friends") { renderFriendsTab(list); return; }
     const head = h("div", { class: "channel-group-header" }, h("span", { text: "Direct Messages" }),
       h("button", { "aria-label": "New DM", onclick: openNewDmModal }, icon("plus", 18)));
     list.appendChild(head);
@@ -3074,6 +3272,123 @@
         inCall ? h("span", { class: "dm-live" }, icon("phone", 12)) : null,
         (dm.unread && !active) ? h("span", { class: "dm-dot" }) : null);
       row.addEventListener("contextmenu", (e) => { e.preventDefault(); openDmMenu(dm, e.clientX, e.clientY); });
+      list.appendChild(row);
+    }
+  }
+
+  // The Friends tab: add by username, answer requests, accept server invites,
+  // and the friend list itself (click = DM them).
+  function renderFriendsTab(list) {
+    const f = state.friends || { friends: [], incoming: [], outgoing: [] };
+
+    // add a friend
+    const input = h("input", { class: "text-input friend-add-input", placeholder: "add friend by username", autocomplete: "off" });
+    const submit = async () => {
+      const name = input.value.trim().replace(/^@/, "");
+      if (!name) return;
+      try {
+        state.friends = await API.addFriend(name);
+        input.value = "";
+        renderDmSidebar();
+        toast(`Friend request sent to @${name}`);
+      } catch (e) { toast(e.message, true); }
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    list.appendChild(h("div", { class: "friend-add" }, input,
+      h("button", { class: "btn btn-sm", "aria-label": "Send friend request", onclick: submit }, icon("user-plus", 15))));
+
+    const section = (title) => list.appendChild(h("div", { class: "channel-group-header" }, h("span", { text: title })));
+    const personRow = (u, ...actions) => {
+      const av = avatar(u.displayName || u.username, u.id, "sm");
+      av.classList.add("has-status"); av.appendChild(statusDot(u.id));
+      noteAvatar(u.id, u.avatarUrl);
+      return h("div", { class: "channel friend-row" }, av,
+        h("span", { class: "name" },
+          h("span", { text: u.displayName || u.username }),
+          listeningLine(u.id)), ...actions);
+    };
+    const iconBtn = (name, label, danger, fn) =>
+      h("button", { class: "friend-action" + (danger ? " danger" : ""), "aria-label": label,
+        onclick: (e) => { e.stopPropagation(); fn(); } }, icon(name, 15));
+
+    // server invites — consent side of "Add People"
+    if ((state.invites || []).length) {
+      section("Server Invites");
+      for (const inv of state.invites) {
+        const row = h("div", { class: "channel friend-row" },
+          inv.guildIconUrl ? h("span", { class: "avatar sm has-img" }, h("img", { src: inv.guildIconUrl, alt: "" }))
+                           : avatar(inv.guildName, inv.guildId, "sm"),
+          h("span", { class: "name" },
+            h("span", { text: inv.guildName }),
+            h("span", { class: "friend-sub", text: "invited by " + (inv.inviterName || "an admin") })),
+          iconBtn("check", "Accept invite", false, async () => {
+            try {
+              const g = await API.acceptInvite(inv.id);
+              state.invites = state.invites.filter((x) => x.id !== inv.id);
+              state.guilds.push(g);
+              ws.subscribeGuilds([g.id]);
+              renderGuildRail(); renderDmSidebar();
+              toast(`Joined ${g.name}`);
+            } catch (e) { toast(e.message, true); }
+          }),
+          iconBtn("x", "Decline invite", true, async () => {
+            try {
+              await API.declineInvite(inv.id);
+              state.invites = state.invites.filter((x) => x.id !== inv.id);
+              renderDmSidebar(); renderGuildRail();
+            } catch (e) { toast(e.message, true); }
+          }));
+        list.appendChild(row);
+      }
+    }
+
+    // requests waiting on me / on them
+    if (f.incoming.length) {
+      section("Requests — for you");
+      for (const u of f.incoming) {
+        list.appendChild(personRow(u,
+          iconBtn("check", "Accept", false, async () => {
+            try { state.friends = await API.acceptFriend(u.id); renderDmSidebar(); renderGuildRail(); }
+            catch (e) { toast(e.message, true); }
+          }),
+          iconBtn("x", "Decline", true, async () => {
+            try { state.friends = await API.removeFriend(u.id); renderDmSidebar(); renderGuildRail(); }
+            catch (e) { toast(e.message, true); }
+          })));
+      }
+    }
+    if (f.outgoing.length) {
+      section("Requests — sent");
+      for (const u of f.outgoing) {
+        list.appendChild(personRow(u,
+          iconBtn("x", "Cancel request", true, async () => {
+            try { state.friends = await API.removeFriend(u.id); renderDmSidebar(); }
+            catch (e) { toast(e.message, true); }
+          })));
+      }
+    }
+
+    section(`Friends — ${f.friends.length}`);
+    if (!f.friends.length) {
+      list.appendChild(h("div", { class: "dm-empty", text: "No friends yet. Add someone by username above." }));
+      return;
+    }
+    for (const u of f.friends) {
+      const row = personRow(u,
+        iconBtn("message-circle", "Message", false, () => openDmWithUser(u.id)));
+      row.onclick = () => openDmWithUser(u.id);
+      row.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        openContextMenu(e.clientX, e.clientY, [
+          { label: "Message", icon: icon("message-circle", 16), onClick: () => openDmWithUser(u.id) },
+          { label: "View Profile", icon: icon("user", 16), onClick: () => openProfileCard(u.id, row) },
+          { separator: true },
+          { label: "Remove Friend", icon: icon("x", 16), danger: true, onClick: async () => {
+            try { state.friends = await API.removeFriend(u.id); renderDmSidebar(); }
+            catch (err) { toast(err.message, true); }
+          } },
+        ]);
+      });
       list.appendChild(row);
     }
   }
@@ -3307,7 +3622,17 @@
     ws.connect();
     await loadGuilds();
     await loadDms();
+    loadSocial(); // friends + invites (badges); not worth blocking first paint
+    API.myJoinRequests().then((g) => { state.myJoinRequests = g || []; }).catch(() => {});
     updateTitleBadge();
+    // landing back from the Spotify consent screen
+    if (/^#spotify-/.test(location.hash)) {
+      const ok = location.hash === "#spotify-connected";
+      toast(ok ? "Spotify connected 🎶"
+        : location.hash === "#spotify-denied" ? "Spotify connection cancelled"
+        : "Spotify connection failed — try again", !ok);
+      history.replaceState(null, "", location.pathname);
+    }
     handleDeepLink();
   }
 
@@ -3710,20 +4035,18 @@
       const username = input.value.trim().replace(/^@/, "");
       if (!username) { err.textContent = "Enter a username"; return; }
       try {
-        await API.addMember(g.id, username);
-        state.members = await API.members(g.id);
-        renderMembers();
+        await API.invite(g.id, username);
         closeModal();
-        toast(`Added @${username}`);
+        toast(`Invite sent to @${username}`);
       } catch (e) { err.textContent = e.message; }
     };
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
     modal({
-      title: "Add People to " + g.name,
-      subtitle: "They join instantly as a member.",
+      title: "Invite People to " + g.name,
+      subtitle: "They join once they accept the invite (Friends tab → Server Invites).",
       body: [h("label", {}, "Username", input), err],
       footer: [h("button", { class: "btn btn-secondary", text: "Cancel", onclick: closeModal }),
-        h("button", { class: "btn", text: "Add", onclick: submit })],
+        h("button", { class: "btn", text: "Send Invite", onclick: submit })],
     });
   }
   async function changeRole(m, role) {
@@ -3796,9 +4119,14 @@
    * MODALS
    * ===================================================================== */
 
-  function closeModal() { $("modal-root").innerHTML = ""; }
+  let modalOnClose = null;
+  function closeModal() {
+    $("modal-root").innerHTML = "";
+    if (modalOnClose) { const f = modalOnClose; modalOnClose = null; f(); }
+  }
 
-  function modal({ title, subtitle, body, footer }) {
+  function modal({ title, subtitle, body, footer, onClose }) {
+    modalOnClose = onClose || null;
     const backdrop = h("div", { class: "modal-backdrop",
       onclick: (e) => { if (e.target === backdrop) closeModal(); } });
     const m = h("div", { class: "modal" },
@@ -4114,47 +4442,325 @@
   }
 
   async function openDiscoverModal() {
+    const search = h("input", { class: "text-input", placeholder: "Search servers…", autocomplete: "off" });
     const listEl = h("div", { style: "display:flex;flex-direction:column;gap:8px;" },
       h("div", { class: "modal-error", style: "color:var(--text-faint)", text: "Loading servers…" }));
     modal({
       title: "Browse servers",
-      subtitle: "Join any server on this instance.",
+      subtitle: "Ask to join — an admin approves your request.",
+      body: [search, listEl],
+      footer: [h("button", { class: "btn btn-secondary", text: "Close", onclick: closeModal })],
+    });
+    search.focus();
+    let all;
+    try {
+      [all, state.myJoinRequests] = await Promise.all([API.allGuilds(), API.myJoinRequests()]);
+    } catch (e) { listEl.innerHTML = ""; listEl.appendChild(h("div", { class: "modal-error", text: e.message })); return; }
+    const mine = new Set(state.guilds.map((g) => g.id));
+    const joinable = all.filter((g) => !mine.has(g.id));
+    const render = () => {
+      const q = search.value.trim().toLowerCase();
+      const shown = q ? joinable.filter((g) => g.name.toLowerCase().includes(q)) : joinable;
+      listEl.innerHTML = "";
+      if (!joinable.length) {
+        listEl.appendChild(h("div", { class: "discover-empty", text: "You've joined every server on this instance." }));
+        return;
+      }
+      if (!shown.length) {
+        listEl.appendChild(h("div", { class: "discover-empty", text: `No servers match “${search.value.trim()}”.` }));
+        return;
+      }
+      for (const g of shown) {
+        const requested = state.myJoinRequests.includes(g.id);
+        const btn = h("button", { class: "btn" + (requested ? " btn-secondary" : ""),
+          text: requested ? "Requested" : "Request to Join" });
+        btn.disabled = requested;
+        const item = h("div", { class: "discover-item" },
+          g.iconUrl ? h("span", { class: "avatar lg has-img" }, h("img", { src: g.iconUrl, alt: "" }))
+                    : avatar(g.name, g.id, "lg"),
+          h("div", { class: "di-info" },
+            h("div", { class: "di-name", text: g.name }),
+            h("div", { class: "di-sub", text: `${(g.channels || []).length} channel(s)` })
+          ),
+          btn
+        );
+        btn.onclick = async () => {
+          btn.disabled = true; btn.textContent = "Requesting…";
+          try {
+            const res = await API.requestJoin(g.id);
+            if (res && res.status === "joined") {
+              // an invite was already waiting — that's mutual consent
+              state.guilds.push(res.guild);
+              state.invites = state.invites.filter((x) => x.guildId !== g.id);
+              ws.subscribeGuilds([g.id]);
+              renderGuildRail();
+              item.remove();
+              toast(`Joined ${res.guild.name}`);
+              selectGuild(g.id);
+              closeModal();
+              return;
+            }
+            state.myJoinRequests.push(g.id);
+            render();
+            toast(`Request sent — an admin of ${g.name} has to approve it`);
+          } catch (e) { toast(e.message, true); render(); }
+        };
+        listEl.appendChild(item);
+      }
+    };
+    search.addEventListener("input", render);
+    render();
+  }
+
+  // The Jukebox: a shared per-voice-channel Spotify queue. Playback happens on
+  // each listener's OWN Spotify (Connect API) — Spotify audio can't legally be
+  // piped through the call, so Listen Along mirrors play/pause/skip instead.
+  let jukeboxOpen = null; // {channelId, refresh} while the modal is up
+  function fmtMs(ms) {
+    const s = Math.floor((ms || 0) / 1000);
+    return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  }
+  async function openJukeboxModal(c) {
+    const body = h("div", { class: "jb-box" }, h("div", { class: "set-note", text: "Loading…" }));
+    let posTimer = null;
+    const { root } = modal({
+      title: "Jukebox — " + c.name,
+      body: [body],
+      footer: [h("button", { class: "btn btn-secondary", text: "Close", onclick: closeModal })],
+      onClose: () => { jukeboxOpen = null; if (posTimer) { clearInterval(posTimer); posTimer = null; } },
+    });
+    root.classList.add("jukebox-modal");
+    const refresh = async () => {
+      let st;
+      try { st = await API.jukebox(c.id); }
+      catch (e) { body.innerHTML = ""; body.appendChild(h("div", { class: "modal-error", text: e.message })); return; }
+      if (posTimer) { clearInterval(posTimer); posTimer = null; }
+      body.innerHTML = "";
+      if (!st.configured) {
+        body.appendChild(h("div", { class: "set-note",
+          text: "Spotify isn't set up on this instance (Settings → Connections explains what the operator needs)." }));
+        return;
+      }
+      if (!st.active) {
+        body.append(
+          h("div", { class: "set-note", text: "No jukebox here right now. Summon it to start a shared Spotify queue for this channel." }),
+          h("button", { class: "btn", text: "Summon Jukebox", onclick: async () => {
+            try { await API.jukeboxSummon(c.id); refresh(); } catch (e) { toast(e.message, true); }
+          } }));
+        return;
+      }
+
+      // now playing
+      const now = st.now;
+      if (now) {
+        const pos = h("span", { text: fmtMs(now.positionMs) });
+        const fetched = Date.now();
+        if (!now.paused) {
+          posTimer = setInterval(() => {
+            pos.textContent = fmtMs(Math.min(now.durationMs, now.positionMs + (Date.now() - fetched)));
+          }, 1000);
+        }
+        body.appendChild(h("div", { class: "jb-now" },
+          now.imageUrl ? h("img", { class: "jb-art", src: now.imageUrl, alt: "" }) : h("span", { class: "jb-art jb-art-empty", text: "♪" }),
+          h("div", { class: "jb-now-info" },
+            h("div", { class: "jb-track", text: now.name }),
+            h("div", { class: "jb-artists", text: now.artists }),
+            h("div", { class: "jb-pos" }, pos, h("span", { text: " / " + fmtMs(now.durationMs) + (now.paused ? " — paused" : "") }))),
+          h("div", { class: "jb-controls" },
+            h("button", { class: "friend-action", "aria-label": now.paused ? "Resume" : "Pause",
+              onclick: async () => { try { await API.jukeboxPause(c.id, !now.paused); refresh(); } catch (e) { toast(e.message, true); } } },
+              icon(now.paused ? "play" : "pause", 15)),
+            h("button", { class: "friend-action", "aria-label": "Skip",
+              onclick: async () => { try { await API.jukeboxSkip(c.id); refresh(); } catch (e) { toast(e.message, true); } } },
+              icon("chevron-up", 15)))));
+      } else {
+        body.appendChild(h("div", { class: "set-note", text: "Nothing playing — queue something below." }));
+      }
+
+      // listen along + listeners
+      const listenBtn = h("button", {
+        class: "btn btn-sm" + (st.listening ? " btn-secondary" : ""),
+        text: st.listening ? "Stop Listening" : "Listen Along",
+        onclick: async () => {
+          try { await API.jukeboxListen(c.id, !st.listening); refresh(); }
+          catch (e) { toast(e.message, true); }
+        } });
+      const listenRow = h("div", { class: "jb-listen" }, listenBtn);
+      if (!st.linked) {
+        listenBtn.disabled = true;
+        listenRow.appendChild(h("span", { class: "set-note", text: "Connect Spotify in Settings → Connections first." }));
+      } else {
+        listenRow.appendChild(h("span", { class: "set-note",
+          text: "Plays on YOUR Spotify (Premium + an open Spotify app needed)." }));
+      }
+      body.appendChild(listenRow);
+      for (const l of st.listeners || []) {
+        const m = state.members.find((mm) => mm.userId === l.userId);
+        body.appendChild(h("div", { class: "jb-listener" },
+          h("span", { text: "🎧 " + (m ? (m.displayName || m.username) : "someone") }),
+          l.error ? h("span", { class: "jb-err", text: l.error }) : h("span", { class: "jb-ok", text: "in sync" })));
+      }
+
+      // search
+      const q = h("input", { class: "text-input", placeholder: "Search songs or playlists…", autocomplete: "off" });
+      const results = h("div", { class: "jb-results" });
+      let searchSeq = 0;
+      const runSearch = async () => {
+        const term = q.value.trim();
+        if (!term) { results.innerHTML = ""; return; }
+        const seq = ++searchSeq;
+        let r;
+        try { r = await API.jukeboxSearch(c.id, term); } catch (e) { toast(e.message, true); return; }
+        if (seq !== searchSeq) return;
+        results.innerHTML = "";
+        for (const t of r.tracks || []) {
+          results.appendChild(h("div", { class: "jb-result" },
+            t.imageUrl ? h("img", { class: "jb-art sm", src: t.imageUrl, alt: "" }) : h("span", { class: "jb-art sm jb-art-empty", text: "♪" }),
+            h("span", { class: "jb-r-name" }, h("span", { text: t.name }), h("span", { class: "friend-sub", text: t.artists + " · " + fmtMs(t.durationMs) })),
+            h("button", { class: "btn btn-secondary btn-sm", text: "Queue", onclick: async () => {
+              try { await API.jukeboxQueue(c.id, t); refresh(); } catch (e) { toast(e.message, true); }
+            } })));
+        }
+        for (const p of r.playlists || []) {
+          results.appendChild(h("div", { class: "jb-result" },
+            h("span", { class: "jb-art sm jb-art-empty", text: "≡" }),
+            h("span", { class: "jb-r-name" }, h("span", { text: p.name }),
+              h("span", { class: "friend-sub", text: "playlist · " + p.owner + " · " + p.trackCount + " tracks" })),
+            h("button", { class: "btn btn-secondary btn-sm", text: "Queue All", onclick: async () => {
+              try { const res = await API.jukeboxQueuePlaylist(c.id, p.id); toast(`Queued ${res.added} tracks`); refresh(); }
+              catch (e) { toast(e.message, true); }
+            } })));
+        }
+        if (!results.children.length) results.appendChild(h("div", { class: "set-note", text: "No matches." }));
+      };
+      let debounce = null;
+      q.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(runSearch, 350); });
+      q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); clearTimeout(debounce); runSearch(); } });
+      body.append(q, results);
+
+      // queue
+      body.appendChild(h("div", { class: "channel-group-header" }, h("span", { text: `Up Next — ${(st.queue || []).length}` })));
+      (st.queue || []).forEach((t, i) => {
+        body.appendChild(h("div", { class: "jb-result" },
+          t.imageUrl ? h("img", { class: "jb-art sm", src: t.imageUrl, alt: "" }) : h("span", { class: "jb-art sm jb-art-empty", text: "♪" }),
+          h("span", { class: "jb-r-name" }, h("span", { text: t.name }), h("span", { class: "friend-sub", text: t.artists })),
+          h("button", { class: "friend-action danger", "aria-label": "Remove from queue", onclick: async () => {
+            try { await API.jukeboxRemove(c.id, i); refresh(); } catch (e) { toast(e.message, true); }
+          } }, icon("x", 14))));
+      });
+
+      // dismiss
+      body.appendChild(h("div", { class: "jb-dismiss" },
+        h("button", { class: "btn danger btn-sm", text: "Dismiss Jukebox", onclick: async () => {
+          try { await API.jukeboxDismiss(c.id); refresh(); } catch (e) { toast(e.message, true); }
+        } })));
+    };
+    jukeboxOpen = { channelId: c.id, refresh };
+    refresh();
+  }
+
+  // Server menu → Members: the full roster. Everyone can look; admins act.
+  // Promote = any admin; demote = owner only; kick/ban = admins, never on the
+  // owner or yourself (same rules the API enforces).
+  async function openMembersModal(g) {
+    const listEl = h("div", { class: "audit-list" }, h("div", { class: "search-hint", text: "Loading…" }));
+    const count = h("span");
+    modal({
+      title: "Members — " + g.name,
+      body: [count, listEl],
+      footer: [h("button", { class: "btn btn-secondary", text: "Close", onclick: closeModal })],
+    });
+    const render = async () => {
+      let members;
+      try {
+        members = await API.members(g.id);
+        if (state.currentGuild && state.currentGuild.id === g.id) { state.members = members; renderMembers(); }
+      } catch (e) { listEl.innerHTML = ""; listEl.appendChild(h("div", { class: "modal-error", text: e.message })); return; }
+      count.className = "set-note";
+      count.textContent = members.length + (members.length === 1 ? " member" : " members");
+      const iAmAdmin = amAdmin();
+      const iAmOwner = amOwner(g);
+      const sorted = [...members].sort((a, b) => {
+        const rank = (m) => (m.userId === g.ownerId ? 0 : m.role === "admin" ? 1 : 2);
+        return rank(a) - rank(b) || (a.displayName || a.username).localeCompare(b.displayName || b.username);
+      });
+      listEl.innerHTML = "";
+      for (const m of sorted) {
+        noteAvatar(m.userId, m.avatarUrl);
+        const isSelf = state.me && m.userId === state.me.id;
+        const isOwnerRow = m.userId === g.ownerId;
+        const act = async (fn, okMsg) => {
+          try { await fn(); if (okMsg) toast(okMsg); render(); }
+          catch (e) { toast(e.message, true); }
+        };
+        const actions = [];
+        if (iAmAdmin && !isSelf && !isOwnerRow) {
+          if (m.role !== "admin") {
+            actions.push(h("button", { class: "btn btn-secondary btn-sm", text: "Make Admin",
+              onclick: () => act(() => API.setRole(g.id, m.userId, "admin")) }));
+          } else if (iAmOwner) {
+            actions.push(h("button", { class: "btn btn-secondary btn-sm", text: "Remove Admin",
+              onclick: () => act(() => API.setRole(g.id, m.userId, "member")) }));
+          }
+          actions.push(h("button", { class: "btn btn-secondary btn-sm", text: "Kick",
+            onclick: () => act(() => API.kick(g.id, m.userId), `Kicked @${m.username}`) }));
+          actions.push(h("button", { class: "btn danger btn-sm", text: "Ban",
+            onclick: () => banMemberFlow({ ...m }) }));
+        }
+        const row = h("div", { class: "dm-member-row" },
+          avatar(m.displayName || m.username, m.userId, "sm"),
+          h("span", { class: "qs-name" },
+            h("span", { text: (m.displayName || m.username) + (isSelf ? " (you)" : "") }),
+            h("span", { class: "friend-sub", text: "@" + m.username })),
+          isOwnerRow ? h("span", { class: "role-badge admin", text: "owner" })
+            : m.role === "admin" ? h("span", { class: "role-badge admin", text: "admin" }) : null,
+          ...actions);
+        row.addEventListener("contextmenu", (e) => {
+          e.preventDefault(); openUserMenu(m.userId, e.clientX, e.clientY, row);
+        });
+        listEl.appendChild(row);
+      }
+    };
+    render();
+  }
+
+  // Admin view: who's knocking? Approve or deny pending join requests.
+  async function openJoinRequestsModal(g) {
+    const listEl = h("div", { class: "audit-list" },
+      h("div", { class: "search-hint", text: "Loading…" }));
+    modal({
+      title: "Join Requests — " + g.name,
+      subtitle: "People asking to join from Browse Servers.",
       body: [listEl],
       footer: [h("button", { class: "btn btn-secondary", text: "Close", onclick: closeModal })],
     });
-    let all;
-    try { all = await API.allGuilds(); } catch (e) { listEl.innerHTML = ""; listEl.appendChild(h("div", { class: "modal-error", text: e.message })); return; }
-    const mine = new Set(state.guilds.map((g) => g.id));
-    const joinable = all.filter((g) => !mine.has(g.id));
-    listEl.innerHTML = "";
-    if (joinable.length === 0) {
-      listEl.appendChild(h("div", { class: "discover-empty", text: "You've joined every server on this instance." }));
-      return;
-    }
-    for (const g of joinable) {
-      const btn = h("button", { class: "btn", text: "Join" });
-      const item = h("div", { class: "discover-item" },
-        g.iconUrl ? h("span", { class: "avatar lg has-img" }, h("img", { src: g.iconUrl, alt: "" }))
-                  : avatar(g.name, g.id, "lg"),
-        h("div", { class: "di-info" },
-          h("div", { class: "di-name", text: g.name }),
-          h("div", { class: "di-sub", text: `${(g.channels || []).length} channel(s)` })
-        ),
-        btn
-      );
-      btn.onclick = async () => {
-        btn.disabled = true; btn.textContent = "Joining…";
-        try {
-          const joined = await API.joinGuild(g.id);
-          state.guilds.push(joined);
-          renderGuildRail();
-          item.remove();
-          toast(`Joined ${joined.name}`);
-          selectGuild(joined.id);
-        } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = "Join"; }
-      };
-      listEl.appendChild(item);
-    }
+    const render = async () => {
+      let reqs;
+      try { reqs = await API.joinRequests(g.id); }
+      catch (e) { listEl.innerHTML = ""; listEl.appendChild(h("div", { class: "modal-error", text: e.message })); return; }
+      listEl.innerHTML = "";
+      if (!reqs.length) {
+        listEl.appendChild(h("div", { class: "search-hint", text: "No pending requests." }));
+        return;
+      }
+      for (const u of reqs) {
+        noteAvatar(u.id, u.avatarUrl);
+        listEl.appendChild(h("div", { class: "dm-member-row" },
+          avatar(u.displayName || u.username, u.id, "sm"),
+          h("span", { class: "qs-name" },
+            h("span", { text: u.displayName || u.username }),
+            h("span", { class: "friend-sub", text: "@" + u.username })),
+          h("button", { class: "btn btn-sm", text: "Approve", onclick: async () => {
+            try { await API.approveJoin(g.id, u.id); toast(`@${u.username} is in`); render(); }
+            catch (e) { toast(e.message, true); }
+          } }),
+          h("button", { class: "btn btn-secondary btn-sm", text: "Deny", onclick: async () => {
+            try { await API.denyJoin(g.id, u.id); render(); }
+            catch (e) { toast(e.message, true); }
+          } })));
+      }
+    };
+    render();
   }
 
   /* =======================================================================
@@ -4338,13 +4944,25 @@
     const isSelf = state.me && userId === state.me.id;
     const isOwnerTarget = g && g.ownerId === userId;
     const canModerate = amAdmin() && !isSelf && !isOwnerTarget && target;
+    // any admin can promote; ONLY the owner can take admin away
+    const canPromote = canModerate && target.role !== "admin";
+    const canDemote = amOwner(g) && !isSelf && !isOwnerTarget && target && target.role === "admin";
+    const f = state.friends || { friends: [], incoming: [], outgoing: [] };
+    const anyFriendState = [...f.friends, ...f.incoming, ...f.outgoing].some((u) => u.id === userId);
     openContextMenu(x, y, [
       { label: "View Profile", icon: icon("user", 16), onClick: () => openProfileCard(userId, anchorEl) },
       !isSelf ? { label: "Message", icon: icon("message-circle", 16), onClick: () => openDmWithUser(userId) } : null,
       !isSelf ? { label: "Mention", icon: icon("at-sign", 16), onClick: () => mentionUser(userId) } : null,
-      canModerate ? { separator: true } : null,
-      canModerate ? { label: target.role === "admin" ? "Remove Admin" : "Make Admin", icon: icon("shield", 16),
-        onClick: () => changeRole(target, target.role === "admin" ? "member" : "admin") } : null,
+      !isSelf && !anyFriendState && target ? { label: "Add Friend", icon: icon("user-plus", 16),
+        onClick: async () => {
+          try { state.friends = await API.addFriend(target.username); toast(`Friend request sent to @${target.username}`); renderGuildRail(); }
+          catch (e) { toast(e.message, true); }
+        } } : null,
+      canModerate || canDemote ? { separator: true } : null,
+      canPromote ? { label: "Make Admin", icon: icon("shield", 16),
+        onClick: () => changeRole(target, "admin") } : null,
+      canDemote ? { label: "Remove Admin", icon: icon("shield", 16),
+        onClick: () => changeRole(target, "member") } : null,
       canModerate ? { label: "Kick " + (target.displayName || target.username), icon: icon("log-out", 16),
         danger: true, onClick: () => kickMember(target) } : null,
       canModerate ? { label: "Ban " + (target.displayName || target.username), icon: icon("shield", 16),
@@ -4381,6 +4999,8 @@
     const isText = c.type === "text";
     const chanMuted = isMuted(c.id);
     openContextMenu(x, y, [
+      c.type === "voice" ? { label: "Jukebox", icon: icon("play", 16), onClick: () => openJukeboxModal(c) } : null,
+      c.type === "voice" ? { separator: true } : null,
       isText ? { label: "Mark As Read", icon: icon("check", 16), onClick: () => markChannelRead(c) } : null,
       isText ? { separator: true } : null,
       isText ? { label: chanMuted ? "Unmute Channel" : "Mute Channel", icon: icon(chanMuted ? "bell" : "bell-off", 16),
@@ -4408,7 +5028,9 @@
         onClick: () => toggleMute(g.id) },
       amAdmin() ? { separator: true } : null,
       amAdmin() ? { label: "Edit Server", icon: icon("settings", 16), onClick: () => renameGuildFlow(g) } : null,
-      amAdmin() ? { label: "Add People", icon: icon("user-plus", 16), onClick: () => openAddMemberModal(g) } : null,
+      amAdmin() ? { label: "Invite People", icon: icon("user-plus", 16), onClick: () => openAddMemberModal(g) } : null,
+      amAdmin() ? { label: "Join Requests", icon: icon("mail-open", 16), onClick: () => openJoinRequestsModal(g) } : null,
+      { label: "Members", icon: icon("users", 16), onClick: () => openMembersModal(g) },
       { label: "Emoji", icon: icon("smile", 16), onClick: () => openEmojiManagerModal(g) },
       amAdmin() ? { label: "Create Channel", icon: icon("plus", 16), onClick: () => openCreateChannelModal("text") } : null,
       amAdmin() ? { label: "Audit Log", icon: icon("scroll", 16), onClick: () => openAuditLogModal(g) } : null,
@@ -5045,7 +5667,7 @@
   }
   function updateTitleBadge() {
     const n = totalMentions();
-    document.title = (n > 0 ? "(" + (n > 99 ? "99+" : n) + ") " : "") + "ephemeral";
+    document.title = (n > 0 ? "(" + (n > 99 ? "99+" : n) + ") " : "") + "Ephemeral";
   }
   let _audioCtx = null;
   function playPing() {

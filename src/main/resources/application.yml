@@ -54,6 +54,11 @@ ephemeral:
     url: ${LIVEKIT_URL:ws://localhost:7880}
     api-key: ${LIVEKIT_API_KEY:devkey}
     api-secret: ${LIVEKIT_API_SECRET:livekit-dev-secret-please-change-me-0123456789}
+  operator-username: ${EPHEMERAL_OPERATOR:}
+  spotify:
+    client-id: ${SPOTIFY_CLIENT_ID:}
+    client-secret: ${SPOTIFY_CLIENT_SECRET:}
+    redirect-uri: ${SPOTIFY_REDIRECT_URI:}
 
 logging:
   level:

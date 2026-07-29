@@ -18,7 +18,7 @@ only after this table says it's the right one.
 | `file/FileController` | `POST /api/uploads` (decoupled from send), `GET /api/files/{id}` (decrypts, sets plaintext length) |
 | `gif/GifController` | Tenor proxy so the API key never reaches the browser |
 | `guild/GuildService` | guilds, channels, memberships, roles, **all access checks** (`requireChannelMember` handles guild + DM + admin-only) |
-| `guild/GuildController` | REST for guilds/channels/members/roles/kick/join/leave |
+| `guild/GuildController` | REST for guilds/channels/members/roles/kick/leave (joining lives in `social/`) |
 | `guild/ModerationService` + `ModerationController` | bans (kick + can't rejoin), admin voice mute/deafen/disconnect (WS `voice_force`, honest-client) |
 | `guild/AuditService` | per-server admin log (`audit_log`, 30-day sweep), `GET /api/guilds/{id}/audit-log` |
 | `health/` | `GET /api/health` |
@@ -29,6 +29,9 @@ only after this table says it's the right one.
 | `realtime/RealtimeService` | fan-out: guild events → guild subscribers; DM events → participants' user sessions; presence/voice → all |
 | `storagechannel/` | storage channels: folder tree of kept files (`storage_items`), member-owned deletes + audited admin override, recursive delete unlinks blobs, purge-exempt |
 | `search/SearchService` | Postgres FTS over `content_tsv`, viewer-scoped, `from:`/`in:`/`has:` filters |
+| `social/` | consent layer: `FriendService` (friendships: request/accept/remove, crossing requests auto-accept), `InviteService` (server invites accept-to-join + join requests admin-approved; replaces direct add & open join). Both push `social_update` |
+| `feedback/` | in-app feedback: anyone POSTs, only the instance operator (`ephemeral.operator-username`, default = first-registered account) lists/deletes |
+| `spotify/` | "listening to" presence: OAuth link (`/api/spotify/*`, callback public, state-nonce bound), encrypted refresh tokens, scheduled poll of currently-playing for online linked users → `PresenceService.setListening`. `JukeboxService`: per-voice-channel shared queue (search/queue/skip/pause), Listen Along mirrors playback onto each listener's own Spotify device (no audio through the server — DRM/ToS) |
 | `unfurl/SafeUrlFetcher` | SSRF guard: re-validates every redirect hop against private/reserved ranges |
 | `unfurl/UnfurlService` | OG/twitter-card parse (jsoup), 15-min cache → `GET /api/unfurl?url=` |
 | `user/` | profiles (`GET /api/users/{id}`, `PATCH /api/users/me`), presence (WS-derived), settings jsonb, account deletion |
@@ -52,6 +55,8 @@ guild-less channels) · V8 `type='dm'` check · V9 encryption at rest (app-compu
 `content_tsv`, `has_link`) · V10 edit history · V11 per-channel `retention_ms`
 · V12 group DMs (`dm_owner_id`) + `guild_bans` + `audit_log` · V13 guild icons
 · V14 custom emoji · V15 avatars/banners/profile embeds · V16 storage channels
+· V17 missing indexes · V18 `friendships` + `guild_invites` + `guild_join_requests`
+· V19 `feedback` · V20 `spotify_accounts`
 
 ## Tests
 
@@ -65,4 +70,5 @@ guild-less channels) · V8 `type='dm'` check · V9 encryption at rest (app-compu
 
 `ready` `message` `message_updated` `message_deleted` `typing` `voice_presence`
 `voice_presence_snapshot` `presence_update` `presence_snapshot` `dm_updated`
-`dm_call` (ring) `voice_force` (admin enforcement)
+`dm_call` (ring) `voice_force` (admin enforcement) `social_update` (friends /
+invites / join_requests / guild_joined — client refetches the affected list)

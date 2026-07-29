@@ -31,9 +31,6 @@ public class GuildController {
     public record AdminOnlyRequest(boolean adminOnly) {
     }
 
-    public record AddMemberRequest(@NotBlank String username) {
-    }
-
     public record SetRoleRequest(@NotBlank String role) {
     }
 
@@ -63,10 +60,7 @@ public class GuildController {
         return guilds.getGuild(user.id(), id);
     }
 
-    @PostMapping("/api/guilds/{id}/join")
-    public GuildDto join(@CurrentUser AuthUser user, @PathVariable UUID id) {
-        return guilds.joinGuild(user.id(), id);
-    }
+    // joining moved to social/InviteController: invites + join requests, both consent-based
 
     @PatchMapping("/api/guilds/{id}")
     public GuildDto rename(@CurrentUser AuthUser user, @PathVariable UUID id,
@@ -136,12 +130,6 @@ public class GuildController {
     @GetMapping("/api/guilds/{id}/members")
     public List<MemberDto> members(@CurrentUser AuthUser user, @PathVariable UUID id) {
         return guilds.listMembers(user.id(), id);
-    }
-
-    @PostMapping("/api/guilds/{id}/members")
-    public MemberDto addMember(@CurrentUser AuthUser user, @PathVariable UUID id,
-                               @RequestBody @Valid AddMemberRequest req) {
-        return guilds.addMember(user.id(), id, req.username());
     }
 
     @PutMapping("/api/guilds/{id}/members/{userId}/role")

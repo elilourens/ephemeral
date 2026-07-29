@@ -45,6 +45,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class EphemeralE2ETest {
 
     static EmbeddedPostgres PG;
+    static com.sun.net.httpserver.HttpServer SPOTIFY_FIXTURE;
+    static final List<String> SPOTIFY_PLAYER_CALLS =
+            java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
     @DynamicPropertySource
     static void datasource(DynamicPropertyRegistry registry) throws Exception {
@@ -54,6 +57,77 @@ class EphemeralE2ETest {
         registry.add("spring.datasource.url", () -> PG.getJdbcUrl("postgres", "postgres"));
         registry.add("spring.datasource.username", () -> "postgres");
         registry.add("spring.datasource.password", () -> "postgres");
+        // pin the feedback-inbox operator (the first-registered fallback is
+        // nondeterministic here: tests share one DB and run in any order)
+        registry.add("ephemeral.operator-username", () -> "opsboss");
+
+        // a loopback stand-in for accounts.spotify.com + api.spotify.com
+        if (SPOTIFY_FIXTURE == null) {
+            SPOTIFY_FIXTURE = com.sun.net.httpserver.HttpServer.create(
+                    new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+            SPOTIFY_FIXTURE.createContext("/api/token", ex -> {
+                byte[] body = """
+                        {"access_token":"fixture-access","token_type":"Bearer","expires_in":3600,
+                         "refresh_token":"fixture-refresh","scope":"user-read-currently-playing"}
+                        """.getBytes(StandardCharsets.UTF_8);
+                ex.getResponseHeaders().set("Content-Type", "application/json");
+                ex.sendResponseHeaders(200, body.length);
+                ex.getResponseBody().write(body);
+                ex.close();
+            });
+            SPOTIFY_FIXTURE.createContext("/v1/me/player/currently-playing", ex -> {
+                byte[] body = """
+                        {"is_playing":true,"item":{"name":"Weightless",
+                         "artists":[{"name":"Marconi Union"}]}}
+                        """.getBytes(StandardCharsets.UTF_8);
+                ex.getResponseHeaders().set("Content-Type", "application/json");
+                ex.sendResponseHeaders(200, body.length);
+                ex.getResponseBody().write(body);
+                ex.close();
+            });
+            SPOTIFY_FIXTURE.createContext("/v1/search", ex -> {
+                byte[] body = """
+                        {"tracks":{"items":[{"uri":"spotify:track:tr1","name":"Test Song",
+                           "artists":[{"name":"Tester"}],"duration_ms":60000,"album":{"images":[]}}]},
+                         "playlists":{"items":[{"id":"pl1","name":"Chill",
+                           "owner":{"display_name":"Op"},"tracks":{"total":2}}]}}
+                        """.getBytes(StandardCharsets.UTF_8);
+                ex.getResponseHeaders().set("Content-Type", "application/json");
+                ex.sendResponseHeaders(200, body.length);
+                ex.getResponseBody().write(body);
+                ex.close();
+            });
+            SPOTIFY_FIXTURE.createContext("/v1/playlists", ex -> {
+                byte[] body = """
+                        {"items":[
+                          {"track":{"uri":"spotify:track:pla","name":"Alpha","artists":[{"name":"A"}],
+                            "duration_ms":60000,"album":{"images":[]}}},
+                          {"track":{"uri":"spotify:track:plb","name":"Beta","artists":[{"name":"B"}],
+                            "duration_ms":60000,"album":{"images":[]}}}]}
+                        """.getBytes(StandardCharsets.UTF_8);
+                ex.getResponseHeaders().set("Content-Type", "application/json");
+                ex.sendResponseHeaders(200, body.length);
+                ex.getResponseBody().write(body);
+                ex.close();
+            });
+            SPOTIFY_FIXTURE.createContext("/v1/me/player/play", ex -> {
+                SPOTIFY_PLAYER_CALLS.add("play:" + new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                ex.sendResponseHeaders(204, -1);
+                ex.close();
+            });
+            SPOTIFY_FIXTURE.createContext("/v1/me/player/pause", ex -> {
+                SPOTIFY_PLAYER_CALLS.add("pause");
+                ex.sendResponseHeaders(204, -1);
+                ex.close();
+            });
+            SPOTIFY_FIXTURE.start();
+        }
+        String spotifyBase = "http://127.0.0.1:" + SPOTIFY_FIXTURE.getAddress().getPort();
+        registry.add("ephemeral.spotify.client-id", () -> "test-client");
+        registry.add("ephemeral.spotify.client-secret", () -> "test-secret");
+        registry.add("ephemeral.spotify.redirect-uri", () -> "http://localhost/api/spotify/callback");
+        registry.add("ephemeral.spotify.auth-base", () -> spotifyBase);
+        registry.add("ephemeral.spotify.api-base", () -> spotifyBase);
     }
 
     @LocalServerPort
@@ -111,6 +185,18 @@ class EphemeralE2ETest {
         return new Session(n.get("token").asText(), UUID.fromString(n.get("user").get("id").asText()));
     }
 
+    /**
+     * Test fixture: put a user straight into a guild. Joining via the API is
+     * consent-based (invite-accept or request-approve) and covered by its own
+     * tests; everything else just needs the membership row.
+     */
+    private void join(UUID guildId, Session member) {
+        jdbc.update("""
+                insert into memberships (guild_id, user_id, role) values (:g, :u, 'member')
+                on conflict (guild_id, user_id) do nothing
+                """, Map.of("g", guildId, "u", member.userId()));
+    }
+
     private UUID channelOfType(JsonNode guild, String type) {
         for (JsonNode c : guild.get("channels")) {
             if (c.get("type").asText().equals(type)) {
@@ -156,7 +242,7 @@ class EphemeralE2ETest {
         UUID gid = UUID.fromString(guild.get("id").asText());
         assertThat(guild.get("channels")).hasSize(2);
 
-        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+        join(gid, member);
         JsonNode members = call("GET", "/api/guilds/" + gid + "/members", admin.token(), null, 200);
         assertThat(members).hasSize(2);
 
@@ -344,7 +430,7 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Feat"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID chan = channelOfType(guild, "text");
-        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+        join(gid, member);
 
         // read-state must not 500 (regression: Postgres has no max(uuid) aggregate)
         JsonNode empty = call("GET", "/api/guilds/" + gid + "/read-state", member.token(), null, 200);
@@ -406,7 +492,7 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", owner.token(), Map.of("name", "Original"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID chan = channelOfType(guild, "text");
-        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+        join(gid, member);
 
         // rename server (admin/owner only)
         JsonNode renamed = call("PATCH", "/api/guilds/" + gid, owner.token(), Map.of("name", "Renamed HQ"), 200);
@@ -425,7 +511,7 @@ class EphemeralE2ETest {
 
         // a non-owner cannot delete; owner can (cascades channels + messages)
         Session other = register(uniqueName());
-        call("POST", "/api/guilds/" + gid + "/join", other.token(), null, 200);
+        join(gid, other);
         call("DELETE", "/api/guilds/" + gid, other.token(), null, 403);
         call("DELETE", "/api/guilds/" + gid, owner.token(), null, 204);
         call("GET", "/api/guilds/" + gid, owner.token(), null, 403); // gone
@@ -437,7 +523,7 @@ class EphemeralE2ETest {
         Session member = register(uniqueName());
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Locked"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
-        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+        join(gid, member);
 
         JsonNode secret = call("POST", "/api/guilds/" + gid + "/channels", admin.token(),
                 Map.of("name", "staff", "type", "text", "adminOnly", true), 200);
@@ -471,7 +557,7 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Searchable"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID chan = channelOfType(guild, "text");
-        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+        join(gid, member);
 
         call("POST", "/api/channels/" + chan + "/messages", admin.token(),
                 Map.of("content", "the quick brown fox jumps"), 200);
@@ -530,13 +616,13 @@ class EphemeralE2ETest {
         JsonNode myGuild = call("POST", "/api/guilds", user.token(), Map.of("name", "Mine"), 200);
         UUID myGid = UUID.fromString(myGuild.get("id").asText());
         UUID myChan = channelOfType(myGuild, "text");
-        call("POST", "/api/guilds/" + myGid + "/join", friend.token(), null, 200);
+        join(myGid, friend);
         call("POST", "/api/channels/" + myChan + "/messages", friend.token(), Map.of("content", "hi in your server"), 200);
 
         JsonNode friendGuild = call("POST", "/api/guilds", friend.token(), Map.of("name", "Theirs"), 200);
         UUID friendGid = UUID.fromString(friendGuild.get("id").asText());
         UUID friendChan = channelOfType(friendGuild, "text");
-        call("POST", "/api/guilds/" + friendGid + "/join", user.token(), null, 200);
+        join(friendGid, user);
         JsonNode postedElsewhere = call("POST", "/api/channels/" + friendChan + "/messages", user.token(),
                 Map.of("content", "my message in their server"), 200);
         UUID postedId = UUID.fromString(postedElsewhere.get("id").asText());
@@ -561,7 +647,7 @@ class EphemeralE2ETest {
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID chan = channelOfType(guild, "text");
         UUID voice = channelOfType(guild, "voice");
-        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+        join(gid, member);
 
         // update topic + slow mode + (voice) user limit — admin only
         JsonNode upd = call("PATCH", "/api/channels/" + chan, admin.token(),
@@ -599,7 +685,7 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Voice"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID voice = channelOfType(guild, "voice");
-        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+        join(gid, member);
 
         JsonNode adminTok = call("POST", "/api/channels/" + voice + "/voice-token", admin.token(), null, 200);
         JsonNode ap = jwtPayload(adminTok.get("token").asText());
@@ -621,8 +707,8 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Mod"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID chan = channelOfType(guild, "text");
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
-        call("POST", "/api/guilds/" + gid + "/join", carol.token(), null, 200);
+        join(gid, bob);
+        join(gid, carol);
 
         UUID bobMsg = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
                 bob.token(), Map.of("content", "bob speaks"), 200).get("id").asText());
@@ -691,7 +777,7 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Saves"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID chan = channelOfType(guild, "text");
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        join(gid, bob);
 
         UUID msg = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
                 admin.token(), Map.of("content", "keep me"), 200).get("id").asText());
@@ -712,7 +798,7 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", alice.token(), Map.of("name", "Uploads"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID chan = channelOfType(guild, "text");
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        join(gid, bob);
 
         UUID aliceUpload = uploadFile(alice.token(), "alice.txt", "alice's file");
         // bob tries to attach alice's upload -> silently not bound (owner mismatch)
@@ -728,7 +814,7 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "KickTest"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID chan = channelOfType(guild, "text");
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        join(gid, bob);
 
         call("GET", "/api/guilds/" + gid, bob.token(), null, 200);                 // in
         call("POST", "/api/channels/" + chan + "/messages", bob.token(), Map.of("content", "hi"), 200);
@@ -812,7 +898,7 @@ class EphemeralE2ETest {
         Session member = register(uniqueName());
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Iconic"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
-        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+        join(gid, member);
         assertThat(guild.get("iconUrl").isNull()).isTrue();
 
         // a text upload is rejected; an image works (admin only)
@@ -876,7 +962,7 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Boot"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID chan = channelOfType(guild, "text");
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        join(gid, bob);
         UUID msg = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
                 bob.token(), Map.of("content", "mine"), 200).get("id").asText());
 
@@ -1000,7 +1086,7 @@ class EphemeralE2ETest {
         Session outsider = register(uniqueName());
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Locker"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        join(gid, bob);
         UUID chan = UUID.fromString(call("POST", "/api/guilds/" + gid + "/channels", admin.token(),
                 Map.of("name", "vault", "type", "storage"), 200).get("id").asText());
 
@@ -1036,7 +1122,7 @@ class EphemeralE2ETest {
 
         // a third member can't touch bob's stuff; bob can't touch... nothing here of admin's
         Session carol = register(uniqueName());
-        call("POST", "/api/guilds/" + gid + "/join", carol.token(), null, 200);
+        join(gid, carol);
         UUID fileId = UUID.fromString(file.get("id").asText());
         call("DELETE", "/api/storage-items/" + fileId, carol.token(), null, 403);
         // bob renames + deletes his own file — attachment row and blob go too
@@ -1103,7 +1189,7 @@ class EphemeralE2ETest {
         Session member = register(uniqueName());
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Emojihaus"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
-        call("POST", "/api/guilds/" + gid + "/join", member.token(), null, 200);
+        join(gid, member);
 
         UUID img = uploadImage(admin.token(), "blob.png");
         // members can't add; bad names rejected; text uploads rejected
@@ -1218,7 +1304,7 @@ class EphemeralE2ETest {
         Session bob = register(bobName);
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Banhammer"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        join(gid, bob);
 
         // members can't ban; admins can — ban removes membership and blocks rejoin
         call("POST", "/api/guilds/" + gid + "/bans/" + admin.userId(), bob.token(),
@@ -1226,17 +1312,21 @@ class EphemeralE2ETest {
         call("POST", "/api/guilds/" + gid + "/bans/" + bob.userId(), admin.token(),
                 Map.of("reason", "being rude"), 200);
         call("GET", "/api/guilds/" + gid, bob.token(), null, 403);
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 403);
-        call("POST", "/api/guilds/" + gid + "/members", admin.token(),
+        // both consent paths are blocked for a banned user
+        call("POST", "/api/guilds/" + gid + "/join-requests", bob.token(), null, 403);
+        call("POST", "/api/guilds/" + gid + "/invites", admin.token(),
                 Map.of("username", bobName), 400);
 
         JsonNode bans = call("GET", "/api/guilds/" + gid + "/bans", admin.token(), null, 200);
         assertThat(bans).hasSize(1);
         assertThat(bans.get(0).get("reason").asText()).isEqualTo("being rude");
 
-        // unban -> rejoin works
+        // unban -> the request/approve path works again
         call("DELETE", "/api/guilds/" + gid + "/bans/" + bob.userId(), admin.token(), null, 200);
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        call("POST", "/api/guilds/" + gid + "/join-requests", bob.token(), null, 200);
+        call("POST", "/api/guilds/" + gid + "/join-requests/" + bob.userId() + "/approve",
+                admin.token(), null, 204);
+        call("GET", "/api/guilds/" + gid, bob.token(), null, 200);
     }
 
     @Test
@@ -1246,7 +1336,10 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Papertrail"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID voiceChan = channelOfType(guild, "voice");
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        // join via the real approve flow so the audit trail gets its member.join
+        call("POST", "/api/guilds/" + gid + "/join-requests", bob.token(), null, 200);
+        call("POST", "/api/guilds/" + gid + "/join-requests/" + bob.userId() + "/approve",
+                admin.token(), null, 204);
 
         call("POST", "/api/guilds/" + gid + "/channels", admin.token(),
                 Map.of("name", "logged", "type", "text"), 200);
@@ -1283,7 +1376,7 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Pings"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID chan = channelOfType(guild, "text");
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        join(gid, bob);
 
         UUID original = UUID.fromString(call("POST", "/api/channels/" + chan + "/messages",
                 bob.token(), Map.of("content", "original"), 200).get("id").asText());
@@ -1347,7 +1440,7 @@ class EphemeralE2ETest {
         JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Inbox"), 200);
         UUID gid = UUID.fromString(guild.get("id").asText());
         UUID chan = channelOfType(guild, "text");
-        call("POST", "/api/guilds/" + gid + "/join", bob.token(), null, 200);
+        join(gid, bob);
 
         call("POST", "/api/channels/" + chan + "/messages", admin.token(),
                 Map.of("content", "hey <@" + bob.userId() + "> look at this"), 200);
@@ -1443,5 +1536,292 @@ class EphemeralE2ETest {
                 """, new MapSqlParameterSource()
                 .addValue("id", id).addValue("m", messageId).addValue("o", ownerId)
                 .addValue("k", id.toString()));
+    }
+
+    // ---- social: invites, join requests, friends, role guards -------------
+
+    @Test
+    void inviteMustBeAcceptedBeforeMembership() throws Exception {
+        String bobName = uniqueName();
+        Session admin = register(uniqueName());
+        Session bob = register(bobName);
+        Session carol = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Consent"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+
+        // members can't invite; admins can — and the invite alone grants nothing
+        call("POST", "/api/guilds/" + gid + "/invites", bob.token(), Map.of("username", bobName), 403);
+        JsonNode inv = call("POST", "/api/guilds/" + gid + "/invites", admin.token(),
+                Map.of("username", bobName), 200);
+        assertThat(inv.get("guildName").asText()).isEqualTo("Consent");
+        call("GET", "/api/guilds/" + gid, bob.token(), null, 403);
+        // duplicate invite is a conflict
+        call("POST", "/api/guilds/" + gid + "/invites", admin.token(), Map.of("username", bobName), 409);
+
+        // bob sees it and accepts -> member; the invite is consumed
+        JsonNode mine = call("GET", "/api/invites", bob.token(), null, 200);
+        assertThat(mine).hasSize(1);
+        UUID inviteId = UUID.fromString(mine.get(0).get("id").asText());
+        // carol can't accept bob's invite
+        call("POST", "/api/invites/" + inviteId + "/accept", carol.token(), null, 404);
+        JsonNode joined = call("POST", "/api/invites/" + inviteId + "/accept", bob.token(), null, 200);
+        assertThat(joined.get("name").asText()).isEqualTo("Consent");
+        call("GET", "/api/guilds/" + gid, bob.token(), null, 200);
+        assertThat(call("GET", "/api/invites", bob.token(), null, 200)).isEmpty();
+
+        // decline path: carol turns hers down and stays out
+        call("POST", "/api/guilds/" + gid + "/invites", admin.token(),
+                Map.of("username", usernameOf(carol)), 200);
+        JsonNode carolInvites = call("GET", "/api/invites", carol.token(), null, 200);
+        call("DELETE", "/api/invites/" + carolInvites.get(0).get("id").asText(), carol.token(), null, 204);
+        call("GET", "/api/guilds/" + gid, carol.token(), null, 403);
+    }
+
+    @Test
+    void joinRequestNeedsAdminApproval() throws Exception {
+        Session admin = register(uniqueName());
+        Session bob = register(uniqueName());
+        Session carol = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Gatekept"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+
+        JsonNode res = call("POST", "/api/guilds/" + gid + "/join-requests", bob.token(), null, 200);
+        assertThat(res.get("status").asText()).isEqualTo("requested");
+        call("GET", "/api/guilds/" + gid, bob.token(), null, 403); // still out
+        assertThat(call("GET", "/api/me/join-requests", bob.token(), null, 200)).hasSize(1);
+
+        // only admins see/approve the queue
+        call("GET", "/api/guilds/" + gid + "/join-requests", bob.token(), null, 403);
+        JsonNode queue = call("GET", "/api/guilds/" + gid + "/join-requests", admin.token(), null, 200);
+        assertThat(queue).hasSize(1);
+        assertThat(queue.get(0).get("id").asText()).isEqualTo(bob.userId().toString());
+        call("POST", "/api/guilds/" + gid + "/join-requests/" + bob.userId() + "/approve",
+                bob.token(), null, 403);
+        call("POST", "/api/guilds/" + gid + "/join-requests/" + bob.userId() + "/approve",
+                admin.token(), null, 204);
+        call("GET", "/api/guilds/" + gid, bob.token(), null, 200); // in
+        assertThat(call("GET", "/api/guilds/" + gid + "/join-requests", admin.token(), null, 200)).isEmpty();
+
+        // deny path
+        call("POST", "/api/guilds/" + gid + "/join-requests", carol.token(), null, 200);
+        call("DELETE", "/api/guilds/" + gid + "/join-requests/" + carol.userId(), admin.token(), null, 204);
+        call("GET", "/api/guilds/" + gid, carol.token(), null, 403);
+
+        // request + pending invite = mutual consent -> joins immediately
+        Session dave = register(uniqueName());
+        call("POST", "/api/guilds/" + gid + "/invites", admin.token(),
+                Map.of("username", usernameOf(dave)), 200);
+        JsonNode direct = call("POST", "/api/guilds/" + gid + "/join-requests", dave.token(), null, 200);
+        assertThat(direct.get("status").asText()).isEqualTo("joined");
+        call("GET", "/api/guilds/" + gid, dave.token(), null, 200);
+    }
+
+    @Test
+    void friendsRequestAcceptRemove() throws Exception {
+        Session alice = register(uniqueName());
+        Session bob = register(uniqueName());
+        Session carol = register(uniqueName());
+
+        // alice -> bob: pending on both sides, no friendship yet
+        JsonNode a = call("POST", "/api/friends", alice.token(), Map.of("username", usernameOf(bob)), 200);
+        assertThat(a.get("outgoing")).hasSize(1);
+        assertThat(a.get("friends")).isEmpty();
+        JsonNode b = call("GET", "/api/friends", bob.token(), null, 200);
+        assertThat(b.get("incoming")).hasSize(1);
+        // duplicates + self are rejected
+        call("POST", "/api/friends", alice.token(), Map.of("username", usernameOf(bob)), 409);
+        call("POST", "/api/friends", alice.token(), Map.of("username", usernameOf(alice)), 400);
+        // carol can't accept a request that isn't hers
+        call("POST", "/api/friends/" + alice.userId() + "/accept", carol.token(), null, 404);
+
+        // bob accepts -> friends both ways
+        b = call("POST", "/api/friends/" + alice.userId() + "/accept", bob.token(), null, 200);
+        assertThat(b.get("friends")).hasSize(1);
+        a = call("GET", "/api/friends", alice.token(), null, 200);
+        assertThat(a.get("friends")).hasSize(1);
+        assertThat(a.get("outgoing")).isEmpty();
+
+        // a crossing request auto-accepts: carol -> alice while alice -> carol
+        call("POST", "/api/friends", alice.token(), Map.of("username", usernameOf(carol)), 200);
+        JsonNode c = call("POST", "/api/friends", carol.token(), Map.of("username", usernameOf(alice)), 200);
+        assertThat(c.get("friends")).hasSize(1);
+
+        // remove is symmetric
+        call("DELETE", "/api/friends/" + bob.userId(), alice.token(), null, 200);
+        b = call("GET", "/api/friends", bob.token(), null, 200);
+        assertThat(b.get("friends")).isEmpty();
+    }
+
+    @Test
+    void onlyTheOwnerCanDemoteAdmins() throws Exception {
+        Session owner = register(uniqueName());
+        Session admin2 = register(uniqueName());
+        Session member = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", owner.token(), Map.of("name", "Hierarchy"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        join(gid, admin2);
+        join(gid, member);
+
+        // owner promotes admin2; a (non-owner) admin can promote too
+        call("PUT", "/api/guilds/" + gid + "/members/" + admin2.userId() + "/role",
+                owner.token(), Map.of("role", "admin"), 204);
+        call("PUT", "/api/guilds/" + gid + "/members/" + member.userId() + "/role",
+                admin2.token(), Map.of("role", "admin"), 204);
+
+        // but a non-owner admin cannot demote another admin — only the owner can
+        call("PUT", "/api/guilds/" + gid + "/members/" + member.userId() + "/role",
+                admin2.token(), Map.of("role", "member"), 403);
+        call("PUT", "/api/guilds/" + gid + "/members/" + member.userId() + "/role",
+                owner.token(), Map.of("role", "member"), 204);
+
+        // nobody touches the owner's role, and plain members touch nothing
+        call("PUT", "/api/guilds/" + gid + "/members/" + owner.userId() + "/role",
+                admin2.token(), Map.of("role", "member"), 400);
+        call("PUT", "/api/guilds/" + gid + "/members/" + admin2.userId() + "/role",
+                member.token(), Map.of("role", "member"), 403);
+    }
+
+    /** The username a session registered with (usernames are the unique handle). */
+    private String usernameOf(Session s) {
+        return jdbc.queryForObject("select username from users where id = :id",
+                Map.of("id", s.userId()), String.class);
+    }
+
+    @Autowired
+    com.ephemeral.user.PresenceService presenceService;
+    @Autowired
+    com.ephemeral.spotify.SpotifyService spotifyService;
+
+    @Test
+    void spotifyConnectFeedsListeningPresence() throws Exception {
+        Session user = register(uniqueName());
+
+        JsonNode status = call("GET", "/api/spotify/status", user.token(), null, 200);
+        assertThat(status.get("configured").asBoolean()).isTrue();
+        assertThat(status.get("connected").asBoolean()).isFalse();
+
+        // consent URL carries a single-use state nonce bound to this user
+        String url = call("GET", "/api/spotify/connect-url", user.token(), null, 200).get("url").asText();
+        assertThat(url).contains("/authorize").contains("user-read-currently-playing");
+        String state = url.replaceAll(".*[&?]state=([^&]+).*", "$1");
+
+        // a bogus state is rejected; the real one links the account (no bearer — it's a redirect)
+        HttpResponse<String> bad = raw("GET", "/api/spotify/callback?code=x&state=nope", null, null);
+        assertThat(bad.statusCode()).isEqualTo(302);
+        assertThat(bad.headers().firstValue("Location").orElse("")).isEqualTo("/#spotify-error");
+        HttpResponse<String> ok = raw("GET", "/api/spotify/callback?code=fake-code&state=" + state, null, null);
+        assertThat(ok.statusCode()).isEqualTo(302);
+        assertThat(ok.headers().firstValue("Location").orElse("")).isEqualTo("/#spotify-connected");
+        assertThat(call("GET", "/api/spotify/status", user.token(), null, 200)
+                .get("connected").asBoolean()).isTrue();
+
+        // while "online", a poll turns currently-playing into listening presence
+        presenceService.connected(user.userId());
+        try {
+            spotifyService.pollOnce();
+            Object mine = presenceService.snapshot().get(user.userId().toString());
+            assertThat(mine).isNotNull();
+            assertThat(((Map<?, ?>) mine).get("listening")).isEqualTo("Weightless — Marconi Union");
+
+            // disconnect clears the line and the link
+            call("DELETE", "/api/spotify", user.token(), null, 204);
+            assertThat(call("GET", "/api/spotify/status", user.token(), null, 200)
+                    .get("connected").asBoolean()).isFalse();
+            Object after = presenceService.snapshot().get(user.userId().toString());
+            assertThat(((Map<?, ?>) after).get("listening")).isNull();
+        } finally {
+            presenceService.disconnected(user.userId());
+        }
+    }
+
+    @Test
+    void jukeboxQueuesSearchesAndSyncsListeners() throws Exception {
+        Session admin = register(uniqueName());
+        Session outsider = register(uniqueName());
+        JsonNode guild = call("POST", "/api/guilds", admin.token(), Map.of("name", "Musicbox"), 200);
+        UUID gid = UUID.fromString(guild.get("id").asText());
+        UUID voice = channelOfType(guild, "voice");
+        String base = "/api/channels/" + voice + "/jukebox";
+
+        // non-members can't even look; members see an inactive box
+        call("GET", base, outsider.token(), null, 403);
+        JsonNode st = call("GET", base, admin.token(), null, 200);
+        assertThat(st.get("active").asBoolean()).isFalse();
+        assertThat(st.get("configured").asBoolean()).isTrue();
+
+        // summon + search (app token — no user link needed to browse)
+        call("POST", base + "/summon", admin.token(), null, 200);
+        JsonNode found = call("GET", base + "/search?q=test", admin.token(), null, 200);
+        assertThat(found.get("tracks")).hasSize(1);
+        assertThat(found.get("playlists")).hasSize(1);
+        JsonNode track = found.get("tracks").get(0);
+
+        // queue the track -> it starts "playing" immediately (queue was empty)
+        call("POST", base + "/queue", admin.token(), Map.of(
+                "uri", track.get("uri").asText(), "name", track.get("name").asText(),
+                "artists", track.get("artists").asText(), "durationMs", track.get("durationMs").asLong()), 204);
+        st = call("GET", base, admin.token(), null, 200);
+        assertThat(st.get("now").get("name").asText()).isEqualTo("Test Song");
+        assertThat(st.get("queue")).isEmpty();
+
+        // listen-along requires a linked Spotify; link and try again
+        call("POST", base + "/listen", admin.token(), Map.of("on", true), 400);
+        String url = call("GET", "/api/spotify/connect-url", admin.token(), null, 200).get("url").asText();
+        String state = url.replaceAll(".*[&?]state=([^&]+).*", "$1");
+        raw("GET", "/api/spotify/callback?code=fake&state=" + state, null, null);
+        SPOTIFY_PLAYER_CALLS.clear();
+        call("POST", base + "/listen", admin.token(), Map.of("on", true), 204);
+        assertThat(SPOTIFY_PLAYER_CALLS).anyMatch(c1 -> c1.startsWith("play:") && c1.contains("spotify:track:tr1"));
+
+        // queue a playlist wholesale, skip into it, pause syncs everyone
+        JsonNode added = call("POST", base + "/queue-playlist", admin.token(), Map.of("playlistId", "pl1"), 200);
+        assertThat(added.get("added").asInt()).isEqualTo(2);
+        call("POST", base + "/skip", admin.token(), null, 204);
+        st = call("GET", base, admin.token(), null, 200);
+        assertThat(st.get("now").get("name").asText()).isEqualTo("Alpha");
+        assertThat(st.get("queue")).hasSize(1);
+        assertThat(SPOTIFY_PLAYER_CALLS).anyMatch(c1 -> c1.contains("spotify:track:pla"));
+
+        call("POST", base + "/pause", admin.token(), Map.of("paused", true), 204);
+        assertThat(SPOTIFY_PLAYER_CALLS).contains("pause");
+        st = call("GET", base, admin.token(), null, 200);
+        assertThat(st.get("now").get("paused").asBoolean()).isTrue();
+
+        // queue edit + dismissal quiets everyone's Spotify
+        call("DELETE", base + "/queue/0", admin.token(), null, 204);
+        st = call("GET", base, admin.token(), null, 200);
+        assertThat(st.get("queue")).isEmpty();
+        call("DELETE", base, admin.token(), null, 204);
+        st = call("GET", base, admin.token(), null, 200);
+        assertThat(st.get("active").asBoolean()).isFalse();
+
+        // text channels have no jukebox
+        UUID text = channelOfType(guild, "text");
+        call("POST", "/api/channels/" + text + "/jukebox/summon", admin.token(), null, 400);
+    }
+
+    @Test
+    void feedbackGoesOnlyToTheOperator() throws Exception {
+        Session operator = register("opsboss"); // matches ephemeral.operator-username
+        Session bob = register(uniqueName());
+
+        call("POST", "/api/feedback", bob.token(), Map.of("body", "   "), 400);
+        call("POST", "/api/feedback", bob.token(), Map.of("body", "the login page is unreadable"), 204);
+
+        // only the operator sees items (200 for everyone — no console-noise 403s)
+        JsonNode asBob = call("GET", "/api/feedback", bob.token(), null, 200);
+        assertThat(asBob.get("operator").asBoolean()).isFalse();
+        assertThat(asBob.get("items")).isEmpty();
+        JsonNode asOp = call("GET", "/api/feedback", operator.token(), null, 200);
+        assertThat(asOp.get("operator").asBoolean()).isTrue();
+        JsonNode inbox = asOp.get("items");
+        assertThat(inbox).hasSize(1);
+        assertThat(inbox.get(0).get("body").asText()).isEqualTo("the login page is unreadable");
+        assertThat(inbox.get(0).get("author").asText()).isEqualTo("@" + usernameOf(bob));
+
+        UUID fid = UUID.fromString(inbox.get(0).get("id").asText());
+        call("DELETE", "/api/feedback/" + fid, bob.token(), null, 403);
+        call("DELETE", "/api/feedback/" + fid, operator.token(), null, 204);
+        assertThat(call("GET", "/api/feedback", operator.token(), null, 200).get("items")).isEmpty();
     }
 }

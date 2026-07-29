@@ -11,6 +11,11 @@
 @font-face { font-family:"Geist"; font-style:normal; font-weight:600; font-display:swap; src:url("/fonts/geist-600.woff2") format("woff2"); }
 @font-face { font-family:"Geist"; font-style:normal; font-weight:700; font-display:swap; src:url("/fonts/geist-700.woff2") format("woff2"); }
 @font-face { font-family:"Instrument Serif"; font-style:normal; font-weight:400; font-display:swap; src:url("/fonts/instrument-serif-400.woff2") format("woff2"); }
+/* variable font: one file covers weights 300-700 */
+@font-face { font-family:"Space Grotesk"; font-style:normal; font-weight:300 700; font-display:swap; src:url("/fonts/space-grotesk-var.woff2") format("woff2"); }
+@font-face { font-family:"Libre Baskerville"; font-style:normal; font-weight:400; font-display:swap; src:url("/fonts/libre-baskerville-400.woff2") format("woff2"); }
+@font-face { font-family:"Libre Baskerville"; font-style:normal; font-weight:700; font-display:swap; src:url("/fonts/libre-baskerville-700.woff2") format("woff2"); }
+@font-face { font-family:"Outfit"; font-style:normal; font-weight:300 700; font-display:swap; src:url("/fonts/outfit-var.woff2") format("woff2"); }
 
 /* ----------------------------- design tokens ---------------------------- */
 :root {
@@ -68,7 +73,7 @@
 
   /* fonts */
   --font-body: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-display: "Instrument Serif", Georgia, serif;
+  --font-display: "Outfit", "Geist", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   --shadow-1: 0 2px 8px rgba(0,0,0,.30);
@@ -1828,8 +1833,10 @@ button:active, .btn:active { transform: scale(.94); }
 .set-row select.text-input { padding: 10px 12px; }
 .set-label .set-sub { margin-top: 3px; line-height: 1.45; }
 
-/* every light-blue button goes smoke (iOS pill), white text/glyphs */
-.btn { background: rgba(255, 255, 255, .24); color: #fff; border: 1px solid rgba(255, 255, 255, .32); }
+/* every light-blue button goes smoke (iOS pill), white text/glyphs;
+   box-shadow also resets — the glossy-blue layer's underglow otherwise
+   leaks out beneath the smoke pill */
+.btn { background: rgba(255, 255, 255, .24); color: #fff; border: 1px solid rgba(255, 255, 255, .32); box-shadow: var(--glass-hi); }
 .btn:hover { background: rgba(255, 255, 255, .34); }
 .btn.btn-secondary { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .22); }
 .btn.btn-secondary:hover { background: rgba(255, 255, 255, .18); }
@@ -1967,3 +1974,154 @@ button:active, .btn:active { transform: scale(.94); }
    in the final override layer, so it wins the cascade. */
 .btn.btn-danger, .btn-danger { background: rgba(224, 82, 82, .55); color: #fff; border: 1px solid rgba(255, 140, 140, .5); }
 .btn.btn-danger:hover, .btn-danger:hover { background: rgba(224, 82, 82, .75); filter: none; }
+
+/* ==================== AUTH CARD: iOS GREY-SMOKE GLASS ====================
+   The night-glass layer flipped every text token white but the login card
+   kept its bright white glass (--glass-float), leaving white-on-white type.
+   The card becomes darker, MORE transparent smoke — the iOS Control-Center
+   material — so the white text ramp holds contrast over the cloud backdrop. */
+.auth-card {
+  background: rgba(44, 50, 62, .40);
+  -webkit-backdrop-filter: blur(40px) saturate(140%);
+  backdrop-filter: blur(40px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, .22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 28px 64px rgba(4, 8, 16, .45);
+}
+.brand { color: var(--text); text-shadow: none; }
+/* --danger is a light-backdrop red; too dark against the smoke */
+.auth-error { color: #ff9aac; }
+
+/* no-blur engines and reduced transparency get near-opaque smoke, not the
+   white card the light-glass fallback above still paints */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .auth-card { background: rgba(40, 48, 62, .97); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .auth-card {
+    background: rgba(40, 48, 62, .97) !important;
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+}
+
+/* ==================== FRIENDS TAB + CONSENT FLOWS ==================== */
+/* Messages | Friends switcher at the top of the DM sidebar */
+.dm-tabs { display: flex; gap: 6px; padding: 10px 8px 4px; }
+.dm-tab {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 7px 10px; border-radius: 999px; font-size: 13.5px; font-weight: 600;
+  color: var(--text-muted); background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .14);
+}
+.dm-tab:hover { background: rgba(255, 255, 255, .16); }
+.dm-tab.active { background: rgba(255, 255, 255, .24); color: var(--text); border-color: rgba(255, 255, 255, .32); }
+.dm-tab-badge {
+  min-width: 17px; height: 17px; padding: 0 5px; border-radius: 999px;
+  background: #e05252; color: #fff; font-size: 11px; font-weight: 700;
+  display: grid; place-items: center;
+}
+
+.friend-add { display: flex; gap: 6px; padding: 8px 8px 2px; }
+.friend-add .text-input { flex: 1; min-width: 0; padding: 8px 12px; font-size: 13.5px; }
+.friend-add .btn { flex: none; padding: 8px 12px; }
+
+.friend-row { align-items: center; }
+.friend-row .name { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.friend-row .name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend-sub { font-size: 11.5px; color: var(--text-faint); font-weight: 400; }
+.friend-action {
+  display: grid; place-items: center; width: 28px; height: 28px; flex: none;
+  border-radius: 50%; color: var(--text-muted); background: rgba(255, 255, 255, .1);
+  border: 1px solid rgba(255, 255, 255, .16);
+}
+.friend-action:hover { background: rgba(255, 255, 255, .24); color: var(--text); }
+.friend-action.danger:hover { background: rgba(224, 82, 82, .5); color: #fff; }
+.qs-name .friend-sub { display: block; }
+
+/* ---- settings → feedback tab (+ operator inbox) ---- */
+.fb-text { width: 100%; resize: vertical; min-height: 90px; }
+.fb-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.fb-inbox { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+.fb-item {
+  border: 1px solid rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .06);
+  border-radius: 12px; padding: 10px 12px;
+}
+.fb-meta { display: flex; align-items: center; gap: 8px; }
+.fb-author { font-weight: 600; font-size: 13px; }
+.fb-time { color: var(--text-faint); font-size: 12px; flex: 1; }
+.fb-body { margin-top: 6px; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+
+/* ---- "listening to" presence + settings connections ---- */
+.m-listening {
+  font-size: 11.5px; color: var(--text-faint); line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.friend-row .name .m-listening { font-weight: 400; }
+.conn-box { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.conn-title { font-weight: 700; font-size: 15px; }
+
+/* ---- jukebox (shared Spotify queue per voice channel) ---- */
+.jukebox-modal { width: min(560px, 92vw); }
+.jb-box { display: flex; flex-direction: column; gap: 10px; }
+.jb-now { display: flex; align-items: center; gap: 12px; }
+.jb-art { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; flex: none; }
+.jb-art.sm { width: 34px; height: 34px; border-radius: 8px; }
+.jb-art-empty {
+  display: grid; place-items: center; background: rgba(255, 255, 255, .1);
+  border: 1px solid rgba(255, 255, 255, .16); color: var(--text-muted); font-size: 20px;
+}
+.jb-art.sm.jb-art-empty { font-size: 15px; }
+.jb-now-info { flex: 1; min-width: 0; }
+.jb-track { font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jb-artists { color: var(--text-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jb-pos { color: var(--text-faint); font-size: 12px; margin-top: 2px; }
+.jb-controls { display: flex; gap: 6px; flex: none; }
+.jb-listen { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.jb-listener { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.jb-err { color: #ff9aac; font-size: 12px; }
+.jb-ok { color: var(--online); font-size: 12px; }
+.jb-results { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+.jb-result { display: flex; align-items: center; gap: 10px; }
+.jb-r-name { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.jb-r-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jb-dismiss { display: flex; justify-content: flex-end; margin-top: 6px; }
+
+/* login tagline removed (user request) — the brand carries the spacing instead */
+.auth-brand { margin-bottom: 26px; }
+
+/* ---- display font: now Outfit (rounded geometric sans; previously Libre
+   Baskerville / Space Grotesk / Instrument Serif — all still shipped, so the
+   token above is a one-line switch). Sans headings want semibold + a touch of
+   negative tracking. ---- */
+.brand { font-weight: 600; font-size: 38px; letter-spacing: -.02em; }
+.empty-view h2 { font-weight: 600; font-size: 32px; letter-spacing: -.02em; }
+.chat-intro h2 { font-weight: 600; letter-spacing: -.015em; }
+
+/* ---- login hourglass: white, sand drains pixel-row by pixel-row, then the
+   glass flips. The loop is seamless: the flip ends at 180° exactly when the
+   animation restarts, and the frame is rotationally symmetric — so "sand all
+   at the bottom, upside down" is pixel-identical to "sand at the top". ---- */
+.auth-mark { color: #fff; transform-origin: 50% 50%; animation: hg-flip 5.6s infinite; }
+@keyframes hg-flip {
+  0%, 74% { transform: rotate(0deg); animation-timing-function: cubic-bezier(.65, 0, .35, 1); }
+  94%, 100% { transform: rotate(180deg); }
+}
+/* top pile drains surface-first… */
+.hg-t0 { animation: hg-t0 5.6s infinite; }
+@keyframes hg-t0 { 0%, 18% { opacity: 1; } 19%, 100% { opacity: 0; } }
+.hg-t1 { animation: hg-t1 5.6s infinite; }
+@keyframes hg-t1 { 0%, 40% { opacity: 1; } 41%, 100% { opacity: 0; } }
+.hg-t2 { animation: hg-t2 5.6s infinite; }
+@keyframes hg-t2 { 0%, 62% { opacity: 1; } 63%, 100% { opacity: 0; } }
+/* …one grain falls while anything is draining… */
+.hg-g { animation: hg-g 5.6s infinite; }
+@keyframes hg-g { 0%, 7% { opacity: 0; } 8%, 62% { opacity: 1; } 63%, 100% { opacity: 0; } }
+/* …and the bottom mound grows floor-first */
+.hg-b1 { animation: hg-b1 5.6s infinite; }
+@keyframes hg-b1 { 0%, 18% { opacity: 0; } 19%, 100% { opacity: 1; } }
+.hg-b2 { animation: hg-b2 5.6s infinite; }
+@keyframes hg-b2 { 0%, 40% { opacity: 0; } 41%, 100% { opacity: 1; } }
+.hg-b3 { animation: hg-b3 5.6s infinite; }
+@keyframes hg-b3 { 0%, 62% { opacity: 0; } 63%, 100% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .auth-mark, .auth-mark rect { animation: none !important; } /* static: both piles shown */
+}
